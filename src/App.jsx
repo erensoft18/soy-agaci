@@ -8,7 +8,7 @@ const C = {
   text:"#1e293b", muted:"#64748b", line:"#94a3b8",
   danger:"#ef4444", success:"#10b981",
 };
-const NW=160, NH=108, HGAP=20, VGAP=90;
+const NW=154, NH=104, MIN_GAP=18, VGAP=100;
 const FONT = "'Poppins',sans-serif";
 
 const REL_DEFS = [
@@ -56,35 +56,123 @@ function personLabel(p, people) {
 
 // ─── Layout ───────────────────────────────────────────────────────────────────
 function buildLayout(people, rels) {
-  const down={},up={},lat={};
+  if (!people.length) return { pos:{}, bbox:{x0:0,y0:0,w:400,h:300} };
+
+  // Build adjacency maps
+  const down={}, up={}, lat={};
   people.forEach(p=>{ down[p.id]=[]; up[p.id]=[]; lat[p.id]=[]; });
   rels.forEach(({type,p1,p2})=>{
-    if(VERTICAL.has(type)){ if(!down[p1].includes(p2)) down[p1].push(p2); if(!up[p2].includes(p1)) up[p2].push(p1); }
-    else if(HORIZONTAL.has(type)){ if(!lat[p1].includes(p2)) lat[p1].push(p2); if(!lat[p2].includes(p1)) lat[p2].push(p1); }
+    if (!people.find(p=>p.id===p1) || !people.find(p=>p.id===p2)) return;
+    if (VERTICAL.has(type)) {
+      if (!down[p1].includes(p2)) down[p1].push(p2);
+      if (!up[p2].includes(p1))   up[p2].push(p1);
+    } else if (HORIZONTAL.has(type)) {
+      if (!lat[p1].includes(p2)) lat[p1].push(p2);
+      if (!lat[p2].includes(p1)) lat[p2].push(p1);
+    }
   });
-  const lev={},roots=people.filter(p=>!up[p.id].length).map(p=>p.id);
-  const q=roots.map(id=>[id,0]); const seen=new Set();
-  while(q.length){ const [id,l]=q.shift(); if(lev[id]!==undefined&&lev[id]>=l) continue; lev[id]=l; if(seen.has(id)) continue; seen.add(id); (down[id]||[]).forEach(c=>q.push([c,l+1])); }
-  people.forEach(p=>{ if(lev[p.id]===undefined) lev[p.id]=0; });
-  for(let i=0;i<5;i++) people.forEach(p=>{ (lat[p.id]||[]).forEach(lid=>{ const nl=Math.max(lev[p.id]||0,lev[lid]||0); lev[p.id]=nl; lev[lid]=nl; }); });
-  const byLev={};
-  Object.entries(lev).forEach(([id,l])=>{ (byLev[l]=byLev[l]||[]).push(id); });
-  const pos={};
-  const maxNodes=Math.max(...Object.values(byLev).map(ids=>ids.length),1);
-  Object.keys(byLev).sort((a,b)=>+a-+b).forEach(l=>{
-    const ids=byLev[l],clustered=new Set(),groups=[];
-    ids.forEach(id=>{ if(clustered.has(id)) return; const cluster=[id]; clustered.add(id); const bfs=[id]; while(bfs.length){ const cur=bfs.shift(); (lat[cur]||[]).forEach(lid=>{ if(!clustered.has(lid)&&ids.includes(lid)){ cluster.push(lid); clustered.add(lid); bfs.push(lid); } }); } groups.push(cluster); });
-    const nodeCount=ids.length;
-    const adaptHGAP=Math.max(12,HGAP-Math.floor(nodeCount/4)*3);
-    const nodeGap=Math.max(6,10-Math.floor(nodeCount/6)*2);
-    const totalW=groups.reduce((s,g)=>s+g.length*NW+(g.length-1)*nodeGap,0)+(groups.length-1)*adaptHGAP;
-    let x=-totalW/2; const y=+l*(NH+VGAP);
-    groups.forEach(group=>{ group.forEach((id,i)=>{ pos[id]={x:x+i*(NW+nodeGap)+NW/2,y:y+NH/2}; }); x+=group.length*NW+(group.length-1)*nodeGap+adaptHGAP; });
+
+  // STEP 1: Assign levels via topological sort (level = max parent level + 1)
+  const lev = {};
+  const roots = people.filter(p => !up[p.id].length).map(p => p.id);
+
+  // Iterative level assignment - keep pushing until stable
+  roots.forEach(id => { lev[id] = 0; });
+  people.forEach(p => { if (lev[p.id] === undefined) lev[p.id] = 0; });
+
+  let changed = true;
+  let iter = 0;
+  while (changed && iter < 20) {
+    changed = false; iter++;
+    people.forEach(p => {
+      const parentLevels = (up[p.id] || []).map(pid => lev[pid] ?? 0);
+      const needed = parentLevels.length > 0 ? Math.max(...parentLevels) + 1 : lev[p.id] ?? 0;
+      if ((lev[p.id] ?? 0) < needed) { lev[p.id] = needed; changed = true; }
+    });
+  }
+
+  // STEP 2: Snap spouses/siblings to same level (take the maximum)
+  changed = true; iter = 0;
+  while (changed && iter < 10) {
+    changed = false; iter++;
+    people.forEach(p => {
+      (lat[p.id] || []).forEach(lid => {
+        const nl = Math.max(lev[p.id] ?? 0, lev[lid] ?? 0);
+        if (lev[p.id] !== nl) { lev[p.id] = nl; changed = true; }
+        if (lev[lid] !== nl) { lev[lid] = nl; changed = true; }
+      });
+    });
+  }
+
+  // STEP 3: Re-check children are below their parents after lat-snap
+  changed = true; iter = 0;
+  while (changed && iter < 10) {
+    changed = false; iter++;
+    people.forEach(p => {
+      (down[p.id] || []).forEach(cid => {
+        const needed = (lev[p.id] ?? 0) + 1;
+        if ((lev[cid] ?? 0) < needed) { lev[cid] = needed; changed = true; }
+      });
+    });
+  }
+
+  // STEP 4: Compact levels — remap to consecutive integers 0,1,2,...
+  const usedLevels = [...new Set(Object.values(lev))].sort((a,b)=>a-b);
+  const levelMap = {};
+  usedLevels.forEach((l,i) => { levelMap[l] = i; });
+  people.forEach(p => { lev[p.id] = levelMap[lev[p.id] ?? 0]; });
+
+  // STEP 5: Group by level
+  const byLev = {};
+  people.forEach(p => {
+    const l = lev[p.id] ?? 0;
+    (byLev[l] = byLev[l] || []).push(p.id);
   });
-  const xs=Object.values(pos).map(p=>p.x),ys=Object.values(pos).map(p=>p.y);
-  const x0=(xs.length?Math.min(...xs):0)-NW/2-24,x1=(xs.length?Math.max(...xs):400)+NW/2+24;
-  const y0=(ys.length?Math.min(...ys):0)-NH/2-24,y1=(ys.length?Math.max(...ys):300)+NH/2+24;
-  return {pos,bbox:{x0,y0,w:x1-x0,h:y1-y0}};
+
+  // STEP 6: Position nodes — cluster spouses/siblings together
+  const pos = {};
+  const SLOT = NW + MIN_GAP; // guaranteed slot width per node
+
+  Object.keys(byLev).sort((a,b)=>+a-+b).forEach(l => {
+    const ids = byLev[l];
+    // Build clusters of lateral peers
+    const clustered = new Set(), groups = [];
+    ids.forEach(id => {
+      if (clustered.has(id)) return;
+      const cluster = [id]; clustered.add(id);
+      const bfs = [id];
+      while (bfs.length) {
+        const cur = bfs.shift();
+        (lat[cur] || []).forEach(lid => {
+          if (!clustered.has(lid) && ids.includes(lid)) {
+            cluster.push(lid); clustered.add(lid); bfs.push(lid);
+          }
+        });
+      }
+      groups.push(cluster);
+    });
+
+    // Total width: each node gets SLOT, spouse pairs get SLOT each
+    const totalNodes = ids.length;
+    const totalW = totalNodes * SLOT;
+    let x = -totalW / 2;
+    const y = +l * (NH + VGAP);
+
+    groups.forEach(group => {
+      group.forEach((id, i) => {
+        pos[id] = { x: x + i * SLOT + NW / 2, y: y + NH / 2 };
+      });
+      x += group.length * SLOT;
+    });
+  });
+
+  const xs = Object.values(pos).map(p => p.x);
+  const ys = Object.values(pos).map(p => p.y);
+  const x0 = Math.min(...xs) - NW/2 - 30;
+  const x1 = Math.max(...xs) + NW/2 + 30;
+  const y0 = Math.min(...ys) - NH/2 - 30;
+  const y1 = Math.max(...ys) + NH/2 + 30;
+  return { pos, bbox: { x0, y0, w: x1-x0, h: y1-y0 } };
 }
 
 // ─── SVG Node ─────────────────────────────────────────────────────────────────
