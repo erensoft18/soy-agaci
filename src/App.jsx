@@ -471,15 +471,58 @@ async function svgToDataUrl(svgString) {
   return new Promise((res,rej)=>{ const blob=new Blob([svgString],{type:"image/svg+xml"}); const url=URL.createObjectURL(blob); const img=new Image(); img.onload=()=>{ const scale=Math.min(2400/img.naturalWidth,1600/img.naturalHeight,2); const canvas=document.createElement("canvas"); canvas.width=img.naturalWidth*scale; canvas.height=img.naturalHeight*scale; const ctx=canvas.getContext("2d"); ctx.fillStyle="#f0f4ff"; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.scale(scale,scale); ctx.drawImage(img,0,0); URL.revokeObjectURL(url); res(canvas.toDataURL("image/png")); }; img.onerror=rej; img.src=url; });
 }
 
-function buildPrintHTML(tree,treeImg) {
-  const people=tree.people||[],rels=tree.rels||[];
-  const pname=id=>(people.find(p=>p.id===id)||{}).name||"?";
-  const today=new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"long",year:"numeric"});
-  const peopleRows=people.map((p,i)=>'<tr style="border-bottom:1px solid #eee;background:'+(i%2===0?"#f9f9f9":"white")+'"><td style="padding:6px 8px;color:#888">'+(i+1)+'</td><td style="padding:6px 8px;font-weight:600">'+(p.photo?'<img src="'+p.photo+'" style="width:20px;height:20px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px"/>':""+p.name)+'</td><td style="padding:6px 8px">'+(p.gender==="male"?"Erkek":"Kadın")+'</td><td style="padding:6px 8px">'+(p.born||"—")+'</td><td style="padding:6px 8px">'+(p.died||"—")+'</td></tr>').join("");
-  const relRows=rels.map((r,i)=>{ const def=RMAP[r.type]||{}; return '<tr style="border-bottom:1px solid #eee;background:'+(i%2===0?"#f9f9f9":"white")+'"><td style="padding:6px 8px;color:#888">'+(i+1)+'</td><td style="padding:6px 8px;font-weight:600">'+pname(r.p1)+'</td><td style="padding:6px 8px"><span style="background:#f0f0f0;border-radius:4px;padding:2px 8px;font-size:12px">'+def.icon+" "+(def.label||r.type)+'</span></td><td style="padding:6px 8px;font-weight:600">'+pname(r.p2)+'</td></tr>'; }).join("");
-  return '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"/><title>'+tree.name+'</title><style>*{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif}body{background:white;color:#111}.page{padding:14mm;min-height:100vh}.title{text-align:center;margin-bottom:12px}.title h1{font-size:22px;font-weight:700}.title p{font-size:11px;color:#666;margin-top:4px}hr{border:none;border-top:1px solid #ccc;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;padding:6px 8px;border-bottom:2px solid #333;font-weight:700}.footer{margin-top:10px;font-size:9px;color:#aaa;text-align:right}@media print{.page{page-break-after:always;break-after:page}.page:last-child{page-break-after:avoid;break-after:avoid}@page{margin:8mm;size:A4}}</style></head><body><div class="page"><div class="title"><h1>'+tree.name+'</h1><p>Soy Ağacı Diyagramı &middot; '+today+'</p></div><hr/>'+(treeImg?'<img src="'+treeImg+'" style="width:100%;height:auto;max-height:225mm;object-fit:contain"/>':"")+'<div class="footer">'+people.length+' kişi &middot; '+rels.length+' ilişki</div></div><div class="page"><div class="title"><h1>'+tree.name+'</h1><p>Aile Üyeleri &middot; '+today+'</p></div><hr/><table><thead><tr><th>#</th><th>Ad Soyad</th><th>Cinsiyet</th><th>Doğum</th><th>Ölüm</th></tr></thead><tbody>'+peopleRows+'</tbody></table></div><div class="page"><div class="title"><h1>'+tree.name+'</h1><p>İlişkiler &middot; '+today+'</p></div><hr/><table><thead><tr><th>#</th><th>Kişi 1</th><th>İlişki</th><th>Kişi 2</th></tr></thead><tbody>'+relRows+'</tbody></table></div><script>window.onload=function(){window.print();window.onafterprint=function(){window.close();};};<\/script></body></html>';
+function buildPrintHTML(tree, treeImg) {
+  const people = tree.people || [], rels = tree.rels || [];
+  const today = new Date().toLocaleDateString("tr-TR", {day:"2-digit", month:"long", year:"numeric"});
+  const imgHtml = treeImg
+    ? '<img src="' + treeImg + '" style="width:100%;height:auto;object-fit:contain;display:block;"/>'
+    : '<p style="text-align:center;color:#999;padding:40px 0">Diyagram oluşturulamadı</p>';
+  return [
+    '<!DOCTYPE html>',
+    '<html lang="tr">',
+    '<head>',
+    '<meta charset="UTF-8"/>',
+    '<title>' + tree.name + ' — Soy Ağacı</title>',
+    '<style>',
+    '  * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }',
+    '  body { background: white; }',
+    '  .page {',
+    '    padding: 10mm 12mm;',
+    '    display: flex;',
+    '    flex-direction: column;',
+    '    align-items: center;',
+    '  }',
+    '  .header { text-align: center; margin-bottom: 8mm; width: 100%; }',
+    '  .header h1 { font-size: 20pt; font-weight: 700; color: #1e293b; }',
+    '  .header p  { font-size: 9pt; color: #64748b; margin-top: 3px; }',
+    '  .divider { border: none; border-top: 1px solid #d1d9f0; width: 100%; margin-bottom: 8mm; }',
+    '  .diagram { width: 100%; }',
+    '  .footer { font-size: 8pt; color: #94a3b8; text-align: right; margin-top: 6mm; width: 100%; }',
+    '  @media print {',
+    '    @page { margin: 6mm; size: A4 landscape; }',
+    '  }',
+    '</style>',
+    '</head>',
+    '<body>',
+    '  <div class="page">',
+    '    <div class="header">',
+    '      <h1>' + tree.name + '</h1>',
+    '      <p>Soy Ağacı &middot; ' + today + ' &middot; ' + people.length + ' kişi</p>',
+    '    </div>',
+    '    <hr class="divider"/>',
+    '    <div class="diagram">' + imgHtml + '</div>',
+    '    <div class="footer">Yazdırıldı: ' + today + '</div>',
+    '  </div>',
+    '  <script>',
+    '    window.onload = function() {',
+    '      window.print();',
+    '      window.onafterprint = function() { window.close(); };',
+    '    };',
+    '  <\/script>',
+    '</body>',
+    '</html>'
+  ].join("\n");
 }
-
 function PrintModal({tree,onClose}) {
   const [generating,setGenerating]=useState(false);
   const [ready,setReady]=useState(false);
@@ -498,9 +541,11 @@ function PrintModal({tree,onClose}) {
         <div style={{padding:"0 16px 18px",display:"flex",flexDirection:"column",gap:12}}>
           <div style={{background:"#f8faff",borderRadius:12,padding:14}}>
             <div style={{fontSize:14,fontWeight:700,color:"#1e293b",marginBottom:10,fontFamily:FONT}}>{tree.name}</div>
-            {[{icon:"🌳",l:"Sayfa 1",d:"Soy Ağacı Diyagramı"},{icon:"👥",l:"Sayfa 2",d:"Üyeler — "+people.length+" kişi"},{icon:"🔗",l:"Sayfa 3",d:"İlişkiler — "+rels.length}].map(r=>(
-              <div key={r.l} style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}><span style={{fontSize:16,width:24,textAlign:"center"}}>{r.icon}</span><span style={{color:"#6366f1",fontSize:13,fontWeight:600,minWidth:58,fontFamily:FONT}}>{r.l}</span><span style={{color:"#64748b",fontSize:13,fontFamily:FONT}}>{r.d}</span></div>
-            ))}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}>
+              <span style={{fontSize:18}}>🌳</span>
+              <span style={{color:"#6366f1",fontSize:14,fontWeight:600,fontFamily:FONT}}>Soy Ağacı Diyagramı</span>
+            </div>
+            <div style={{fontSize:13,color:"#64748b",fontFamily:FONT,marginTop:4}}>{people.length} kişi · Yatay A4 · Tek sayfa</div>
           </div>
           {generating?<div style={{textAlign:"center",color:"#64748b",fontSize:14,fontFamily:FONT}}>🔄 Diyagram hazırlanıyor…</div>:<div style={{textAlign:"center",color:"#10b981",fontSize:14,fontFamily:FONT}}>✓ Hazır</div>}
           <div style={{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:10,padding:"11px 14px",fontSize:13,color:"#4f46e5",lineHeight:1.6,fontFamily:FONT}}>💡 Açılan pencerede print diyaloğu başlar. <strong>"PDF Olarak Kaydet"</strong> seçin.</div>
