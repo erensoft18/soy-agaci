@@ -176,9 +176,13 @@ function buildLayout(people, rels) {
 }
 
 // ─── SVG Node ─────────────────────────────────────────────────────────────────
-function Node({person,p,sel,onClick}) {
-  const col=person.gender==="male"?C.male:C.female;
-  const colLight=person.gender==="male"?"#dbeafe":"#fce7f3";
+function Node({person,p,sel,onClick,outsider}) {
+  const col        = person.gender==="male" ? C.male : C.female;
+  const normalBg   = person.gender==="male" ? "#dbeafe" : "#fce7f3";
+  const outsiderBg = person.gender==="male" ? "#1e40af" : "#9d174d";
+  const cardBg     = sel ? "#e0e7ff" : (outsider ? outsiderBg : normalBg);
+  const nameFill   = outsider && !sel ? "#ffffff" : "#1e293b";
+  const yearFill   = outsider && !sel ? "#cbd5e1" : "#64748b";
   const isDead=!!person.died;
   return (
     <g transform={"translate("+(p.x-NW/2)+","+(p.y-NH/2)+")"} data-node="1"
@@ -189,18 +193,19 @@ function Node({person,p,sel,onClick}) {
           <feDropShadow dx="0" dy="2" stdDeviation={sel?5:3} floodColor={col} floodOpacity={sel?0.3:0.1}/>
         </filter>
       </defs>
-      <rect width={NW} height={NH} rx={14} fill={sel?colLight:"#ffffff"} stroke={col} strokeWidth={sel?2.5:1.5} filter={"url(#sh-"+person.id+")"} opacity={isDead?0.65:1}/>
+      <rect width={NW} height={NH} rx={14} fill={cardBg} stroke={col} strokeWidth={sel?2.5:(outsider?2:1.5)} filter={"url(#sh-"+person.id+")"} opacity={isDead?0.65:1}/>
+      {outsider&&!sel&&<rect width={NW} height={NH} rx={14} fill="none" stroke={col} strokeWidth={1} strokeDasharray="4 3" opacity={0.4}/>}
       <rect width={NW} height={5} rx={2} fill={col}/>
       {person.photo
         ?<image href={person.photo} x={NW/2-25} y={13} width={50} height={50} clipPath={"url(#cp-"+person.id+")"} preserveAspectRatio="xMidYMid slice"/>
-        :<><circle cx={NW/2} cy={38} r={25} fill={colLight} stroke={col} strokeWidth={1.5}/><text x={NW/2} y={46} textAnchor="middle" fill={col} fontSize={20} fontFamily="serif">{person.gender==="male"?"♂":"♀"}</text></>
+        :<><circle cx={NW/2} cy={38} r={25} fill={normalBg} stroke={col} strokeWidth={1.5}/><text x={NW/2} y={46} textAnchor="middle" fill={col} fontSize={20} fontFamily="serif">{person.gender==="male"?"♂":"♀"}</text></>
       }
       <circle cx={NW/2} cy={38} r={25} fill="none" stroke={col} strokeWidth={1.5} opacity={0.5}/>
       {isDead&&<text x={NW-12} y={18} fill="#94a3b8" fontSize={13}>✝</text>}
-      <text x={NW/2} y={76} textAnchor="middle" fill="#1e293b" fontSize={11} fontWeight="700" fontFamily={FONT}>
+      <text x={NW/2} y={76} textAnchor="middle" fill={nameFill} fontSize={11} fontWeight="700" fontFamily={FONT}>
         {person.name.length>18?person.name.slice(0,17)+"…":person.name}
       </text>
-      <text x={NW/2} y={92} textAnchor="middle" fill="#64748b" fontSize={10} fontFamily={FONT}>
+      <text x={NW/2} y={92} textAnchor="middle" fill={yearFill} fontSize={10} fontFamily={FONT}>
         {person.born||"?"}{person.died?" – "+person.died:""}
       </text>
     </g>
@@ -261,7 +266,17 @@ function Canvas({people,rels,selId,onSelect}) {
         onClick={()=>onSelect(null)}>
         <g transform={"translate("+vp.x+","+vp.y+") scale("+vp.s+")"}>
           {lines}
-          {people.map(p=>{ const pt=pos[p.id]; if(!pt) return null; return <Node key={p.id} person={p} p={pt} sel={selId===p.id} onClick={onSelect}/>; })}
+          {(()=>{
+            const hasParent=new Set(rels.filter(r=>r.type==="parent").map(r=>r.p2));
+            const hasSpouse=new Set([
+              ...rels.filter(r=>r.type==="spouse").map(r=>r.p1),
+              ...rels.filter(r=>r.type==="spouse").map(r=>r.p2),
+            ]);
+            return people.map(p=>{ const pt=pos[p.id]; if(!pt) return null;
+              const isOutsider=hasSpouse.has(p.id)&&!hasParent.has(p.id);
+              return <Node key={p.id} person={p} p={pt} sel={selId===p.id} onClick={onSelect} outsider={isOutsider}/>;
+            });
+          })()}
         </g>
       </svg>
       <button onClick={doFit} style={{position:"absolute",top:10,right:10,background:"#ffffff",border:"1px solid #d1d9f0",borderRadius:8,color:"#1e293b",padding:"7px 13px",fontSize:13,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,0.08)",fontFamily:FONT}}>⊡ Sığdır</button>
@@ -663,7 +678,10 @@ function TreeEditor({tree,onSave,onBack}) {
                     {p.photo?<img src={p.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(p.gender==="male"?"♂":"♀")}
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}{p.died&&<span style={{color:"#94a3b8",marginLeft:6,fontSize:12}}>✝</span>}</div>
+                    <div style={{fontSize:14,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      {p.name}{p.died&&<span style={{color:"#94a3b8",marginLeft:6,fontSize:12}}>✝</span>}
+                      {(()=>{ const hp=new Set(rels.filter(r=>r.type==="parent").map(r=>r.p2)); const hs=new Set([...rels.filter(r=>r.type==="spouse").map(r=>r.p1),...rels.filter(r=>r.type==="spouse").map(r=>r.p2)]); return hs.has(p.id)&&!hp.has(p.id)?<span style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:4,fontSize:10,color:"#92400e",padding:"1px 5px",marginLeft:6,fontWeight:500}}>dışarıdan</span>:null; })()}
+                    </div>
                     <div style={{fontSize:12,color:"#64748b",marginTop:1}}>{p.born||"?"}{p.died?" – "+p.died:""}</div>
                   </div>
                   <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
