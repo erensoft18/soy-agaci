@@ -342,78 +342,115 @@ function buildLayout(people, rels) {
   };
 }
 
-// ─── SVG Node — portrait card ────────────────────────────────────────────────
+// ─── SVG Node — portrait card (matches person list design) ──────────────────
 function Node({person,p,sel,onClick,outsider}) {
   const col        = person.gender==="male" ? C.male : C.female;
+  const colDark    = person.gender==="male" ? "#1d4ed8" : "#be185d";
   const normalBg   = person.gender==="male" ? "#dbeafe" : "#fce7f3";
   const outsiderBg = person.gender==="male" ? "#1e40af" : "#9d174d";
-  const cardBg     = sel ? "#e0e7ff" : (outsider ? outsiderBg : normalBg);
+  const cardBg     = sel ? "#eef2ff" : (outsider ? outsiderBg : "#ffffff");
+  const photoBg    = sel ? "#e0e7ff" : normalBg;
   const nameFill   = outsider && !sel ? "#ffffff" : "#1e293b";
-  const yearFill   = outsider && !sel ? "#cbd5e1" : "#64748b";
+  const yearFill   = outsider && !sel ? "#bfdbfe" : "#64748b";
   const isDead     = !!person.died;
-  // Portrait layout constants
-  const PH = Math.round(NW * 1.18); // photo area height (~3:4 within card)
-  const photoY = 5;                  // starts just below top strip
-  const infoY  = photoY + PH - 10;  // info overlaps photo bottom slightly
-  const ovalRx = NW * 0.52;         // oval x-radius for bottom clip
-  const ovalRy = 18;                 // oval y-radius
-  const clipId = "cp-"+person.id;
-  const ovalId = "op-"+person.id;
+
+  // Layout: photo takes top ~65% of card, info takes bottom ~35%
+  const STRIP  = 5;               // top colour strip height
+  const PH     = NH - STRIP - 52; // photo area height
+  const ovalRx = NW * 0.54;
+  const ovalRy = 16;
+  const photoBottom = STRIP + PH;
+  const infoTop     = photoBottom - ovalRy + 4;
+  const cid = "cp-"+person.id;
+  const fid = "sh-"+person.id;
+  const gid = "gr-"+person.id;
+
   return (
     <g transform={"translate("+(p.x-NW/2)+","+(p.y-NH/2)+")"} data-node="1"
        onClick={e=>{e.stopPropagation();onClick(person.id);}} style={{cursor:"pointer"}}>
       <defs>
-        {/* Rectangular clip for photo area */}
-        <clipPath id={clipId}>
-          <rect x={0} y={photoY} width={NW} height={PH}/>
+        {/* Card clip — rounded rect */}
+        <clipPath id={"cc-"+person.id}>
+          <rect width={NW} height={NH} rx={14}/>
         </clipPath>
-        {/* Oval clip for bottom of photo (portrait frame effect) */}
-        <clipPath id={ovalId}>
-          <ellipse cx={NW/2} cy={photoY+PH} rx={ovalRx} ry={ovalRy+2}/>
+        {/* Photo area clip */}
+        <clipPath id={cid}>
+          <rect x={0} y={STRIP} width={NW} height={PH}/>
         </clipPath>
-        <filter id={"sh-"+person.id} x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="3" stdDeviation={sel?6:3} floodColor={col} floodOpacity={sel?0.3:0.12}/>
+        {/* Drop shadow */}
+        <filter id={fid} x="-25%" y="-25%" width="150%" height="150%">
+          <feDropShadow dx="0" dy={sel?4:2} stdDeviation={sel?7:4}
+            floodColor={sel?"#6366f1":col} floodOpacity={sel?0.35:0.18}/>
         </filter>
+        {/* Subtle gradient overlay on photo bottom */}
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="55%" stopColor={cardBg} stopOpacity="0"/>
+          <stop offset="100%" stopColor={cardBg} stopOpacity="1"/>
+        </linearGradient>
       </defs>
 
-      {/* Card background */}
+      {/* ── Card shell ── */}
       <rect width={NW} height={NH} rx={14} fill={cardBg}
-        stroke={sel?"#6366f1":col} strokeWidth={sel?2.5:(outsider?2:1.5)}
-        filter={"url(#sh-"+person.id+")"} opacity={isDead?0.65:1}/>
-      {outsider&&!sel&&<rect width={NW} height={NH} rx={14} fill="none" stroke={col} strokeWidth={1} strokeDasharray="4 3" opacity={0.35}/>}
+        stroke={sel?"#6366f1":col}
+        strokeWidth={sel?2.5:(outsider?2:1.5)}
+        filter={"url(#"+fid+")"}
+        opacity={isDead?0.7:1}/>
 
-      {/* Top colour strip */}
-      <rect width={NW} height={5} rx={2} fill={col}/>
+      {/* Outsider dashed inner border */}
+      {outsider&&!sel&&
+        <rect x={2} y={2} width={NW-4} height={NH-4} rx={12}
+          fill="none" stroke={col} strokeWidth={1} strokeDasharray="5 3" opacity={0.4}/>}
 
-      {/* Photo or avatar — full width portrait */}
+      {/* ── Photo area ── */}
       {person.photo
-        ?<image href={person.photo} x={0} y={photoY} width={NW} height={PH}
-            clipPath={"url(#"+clipId+")"} preserveAspectRatio="xMidYMid slice"/>
-        :<>
-          <rect x={0} y={photoY} width={NW} height={PH} fill={normalBg} clipPath={"url(#"+clipId+")"}/>
-          <text x={NW/2} y={photoY+PH*0.55} textAnchor="middle" fill={col} fontSize={44}
-            fontFamily="serif" opacity={0.45}>{person.gender==="male"?"♂":"♀"}</text>
-        </>
+        ? <image href={person.photo}
+            x={0} y={STRIP} width={NW} height={PH}
+            clipPath={"url(#"+cid+")"}
+            preserveAspectRatio="xMidYMid slice"/>
+        : <>
+            <rect x={0} y={STRIP} width={NW} height={PH}
+              fill={photoBg} clipPath={"url(#"+cid+")"}/>
+            <text x={NW/2} y={STRIP+PH*0.56}
+              textAnchor="middle" dominantBaseline="middle"
+              fill={col} fontSize={50} fontFamily="serif" opacity={0.35}>
+              {person.gender==="male"?"♂":"♀"}
+            </text>
+          </>
       }
 
-      {/* Oval white arch at bottom of photo */}
-      <ellipse cx={NW/2} cy={photoY+PH} rx={ovalRx} ry={ovalRy}
-        fill={cardBg} stroke={col} strokeWidth={1.5} opacity={0.92}/>
+      {/* Gradient fade at photo bottom */}
+      <rect x={0} y={STRIP} width={NW} height={PH}
+        fill={"url(#"+gid+")"}
+        clipPath={"url(#"+cid+")"}/>
 
-      {/* Death marker */}
-      {isDead&&<text x={NW-9} y={16} fill="#94a3b8" fontSize={12}>✝</text>}
+      {/* ── Bottom colour strip (mirrors top) ── */}
+      <rect x={0} y={NH-STRIP} width={NW} height={STRIP} rx={2} fill={col} opacity={0.9}/>
 
+      {/* ── Top colour strip ── */}
+      <rect width={NW} height={STRIP} rx={2} fill={col} opacity={0.9}/>
+
+      {/* ── Info section — name + years only ── */}
       {/* Name */}
-      <text x={NW/2} y={infoY+18} textAnchor="middle" fill={nameFill}
-        fontSize={10} fontWeight="700" fontFamily={FONT}>
+      <text x={NW/2} y={infoTop+14} textAnchor="middle"
+        fill={nameFill} fontSize={11} fontWeight="700" fontFamily={FONT}>
         {person.name.length>16?person.name.slice(0,15)+"…":person.name}
       </text>
 
       {/* Years */}
-      <text x={NW/2} y={infoY+32} textAnchor="middle" fill={yearFill}
-        fontSize={9} fontFamily={FONT}>
+      <text x={NW/2} y={infoTop+28} textAnchor="middle"
+        fill={yearFill} fontSize={9} fontFamily={FONT}>
         {person.born||"?"}{person.died?" – "+person.died:""}
       </text>
+
+      {/* Death cross */}
+      {isDead&&
+        <text x={NW-8} y={STRIP+14} textAnchor="middle"
+          fill="#ffffff" fontSize={12} opacity={0.9} fontFamily="serif">✝</text>}
+
+      {/* Selected ring */}
+      {sel&&
+        <rect width={NW} height={NH} rx={14} fill="none"
+          stroke="#6366f1" strokeWidth={2.5} opacity={0.7}/>}
     </g>
   );
 }
@@ -1175,10 +1212,13 @@ function TreeEditor({tree,onSave,onBack}) {
                         <div style={{background:isOutsider?"#fef3c7":gBg,border:"1px solid "+(isOutsider?"#fcd34d":gCol),borderRadius:4,fontSize:9,color:isOutsider?"#92400e":gCol,padding:"1px 6px",fontWeight:600,fontFamily:FONT,marginBottom:1}}>
                           {isOutsider?"dışarıdan":p.gender==="male"?"♂ Erkek":"♀ Kadın"}
                         </div>
-                        {/* Name */}
-                        <div style={{fontSize:13,fontWeight:700,textAlign:"center",color:"#1e293b",lineHeight:1.3,wordBreak:"break-word"}}>
-                          {p.name}{p.died&&<span style={{color:"#94a3b8",fontSize:10}}> ✝</span>}
-                        </div>
+                        {/* Name: first name above, surname below */}
+                        {(()=>{const pts=p.name.trim().split(" ");const soyad=pts.length>1?pts[pts.length-1]:"";const ad=pts.length>1?pts.slice(0,-1).join(" "):pts[0];return(
+                          <div style={{textAlign:"center",lineHeight:1.35,width:"100%"}}>
+                            <div style={{fontSize:11,fontWeight:500,color:"#475569",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ad}</div>
+                            <div style={{fontSize:13,fontWeight:800,color:"#1e293b",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{soyad||ad}{p.died&&<span style={{color:"#94a3b8",fontSize:10}}> ✝</span>}</div>
+                          </div>
+                        );})()}
                         {/* Years */}
                         <div style={{fontSize:11,color:"#64748b",textAlign:"center"}}>{p.born||"?"}{p.died?" – "+p.died:""}</div>
                         {/* Actions */}
@@ -1211,7 +1251,7 @@ function TreeEditor({tree,onSave,onBack}) {
               ?<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{relsSearch}" için sonuç yok</div>
               :<DragGrid
                 items={filteredRels}
-                columns="repeat(auto-fill,minmax(160px,1fr))"
+                columns="repeat(auto-fill,minmax(200px,1fr))"
                 onReorder={filtered=>{
                   if(!relsSearch.trim()){ setRels(filtered); return; }
                   const ids=filtered.map(r=>r.id);
@@ -1227,14 +1267,14 @@ function TreeEditor({tree,onSave,onBack}) {
                     const gb=px.gender==="male"?"#dbeafe":"#fce7f3";
                     return (
                       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",minWidth:0}}>
-                        <div style={{width:"100%",aspectRatio:"3/4",position:"relative",overflow:"hidden",borderRadius:"10px 10px 50% 50%",border:"2.5px solid "+gc,background:gb,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:5}}>
+                        <div style={{width:"100%",aspectRatio:"3/4",position:"relative",overflow:"hidden",borderRadius:"10px",border:"2.5px solid "+gc,background:gb,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:5}}>
                           {px.photo
                             ?<img src={px.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                             :<span style={{fontSize:30,color:gc,opacity:0.5}}>{px.gender==="male"?"♂":"♀"}</span>
                           }
                           <div style={{position:"absolute",inset:0,boxShadow:"inset 0 0 0 2px "+gc+"44",borderRadius:"inherit",pointerEvents:"none"}}/>
                         </div>
-                        <div style={{fontSize:11,fontWeight:700,color:"#1e293b",textAlign:"center",wordBreak:"break-word",lineHeight:1.25}}>
+                        <div style={{fontSize:11,fontWeight:700,color:"#1e293b",textAlign:"center",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",lineHeight:1.3}}>
                           {px.name}{px.died&&<span style={{color:"#94a3b8",fontSize:10}}> ✝</span>}
                         </div>
                         {px.born&&<div style={{fontSize:10,color:"#64748b",marginTop:1}}>{px.born}{px.died?" – "+px.died:""}</div>}
