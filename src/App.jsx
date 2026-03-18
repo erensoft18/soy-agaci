@@ -1093,17 +1093,15 @@ async function svgToDataUrl(svgString) {
 }
 
 function buildPrintHTML(tree, tileImgs, title) {
-  // tileImgs: array of {dataUrl, w, h} — one per page tile
-  // title: custom title override
   const people = tree.people || [], rels = tree.rels || [];
   const today = new Date().toLocaleDateString("tr-TR", {day:"2-digit", month:"long", year:"numeric"});
   const displayTitle = title || tree.name;
 
   const pageHtmls = tileImgs.map((tile, i) => {
     const imgHtml = tile
-      ? '<img src="' + tile.dataUrl + '" style="width:100%;height:auto;object-fit:contain;display:block;"/>'
+      ? '<img src="' + tile.dataUrl + '" alt=""/>'
       : '<p style="text-align:center;color:#999;padding:40px 0">Diyagram oluşturulamadı</p>';
-    const pageInfo = displayTitle + ' &middot; Soy Ağacı &middot; ' + today + ' &middot; ' + people.length + ' kişi'
+    const pageInfo = displayTitle + ' &middot; Soy A&#287;ac&#305; &middot; ' + today + ' &middot; ' + people.length + ' ki&#351;i'
       + (tileImgs.length > 1 ? ' &middot; ' + (i+1) + '/' + tileImgs.length : '');
     return [
       '<div class="page">',
@@ -1113,22 +1111,59 @@ function buildPrintHTML(tree, tileImgs, title) {
     ].join('\n');
   });
 
+  const css = [
+    '* { box-sizing:border-box; margin:0; padding:0; font-family:sans-serif; }',
+    'html, body { height:100%; background:white; }',
+    '.page {',
+    '  display: flex;',
+    '  flex-direction: column;',
+    '  height: 100vh;',
+    '  width: 100%;',
+    '  page-break-after: always;',
+    '  break-after: page;',
+    '  overflow: hidden;',
+    '}',
+    '.page:last-child { page-break-after:avoid; break-after:avoid; }',
+    '.diagram {',
+    '  flex: 1;',
+    '  min-height: 0;',
+    '  display: flex;',
+    '  align-items: center;',
+    '  justify-content: center;',
+    '  padding: 5mm 8mm 2mm 8mm;',
+    '  overflow: hidden;',
+    '}',
+    '.diagram img {',
+    '  max-width: 100%;',
+    '  max-height: 100%;',
+    '  width: auto;',
+    '  height: auto;',
+    '  object-fit: contain;',
+    '  display: block;',
+    '}',
+    '.footer {',
+    '  flex-shrink: 0;',
+    '  text-align: center;',
+    '  padding: 3mm 8mm 5mm 8mm;',
+    '  border-top: 1.5pt solid #c7d2fe;',
+    '  font-size: 11pt;',
+    '  color: #475569;',
+    '  font-weight: 600;',
+    '  letter-spacing: 0.03em;',
+    '}',
+    '@media print {',
+    '  @page { margin: 0; size: A4 landscape; }',
+    '  html, body { height: 100%; }',
+    '}',
+  ].join('\n');
+
   return [
     '<!DOCTYPE html>',
     '<html lang="tr">',
     '<head>',
     '<meta charset="UTF-8"/>',
     '<title>' + displayTitle + ' — Soy Ağacı</title>',
-    '<style>',
-    '  * { box-sizing:border-box; margin:0; padding:0; font-family:sans-serif; }',
-    '  body { background:white; }',
-    '  .page { width:100%; page-break-after:always; break-after:page; }',
-    '  .page:last-child { page-break-after:avoid; break-after:avoid; }',
-    '  .diagram { width:100%; padding:6mm 8mm 2mm 8mm; }',
-    '  .diagram img { width:100%; height:auto; display:block; max-height:175mm; object-fit:contain; }',
-    '  .footer { font-size:7pt; color:#94a3b8; text-align:left; padding:2mm 8mm 4mm 8mm; border-top:0.5pt solid #e2e8f0; }',
-    '  @media print { @page { margin:0; size:A4 landscape; } body { margin:0; } }',
-    '</style>',
+    '<style>' + css + '</style>',
     '</head>',
     '<body>',
     pageHtmls.join('\n'),
