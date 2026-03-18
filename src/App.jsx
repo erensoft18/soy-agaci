@@ -22,11 +22,43 @@ const RMAP       = Object.fromEntries(REL_DEFS.map(r=>[r.value,r]));
 const VERTICAL   = new Set(["parent","grandparent","uncle"]);
 const HORIZONTAL = new Set(["spouse","sibling"]);
 
-// ─── Storage ──────────────────────────────────────────────────────────────────
-async function storageGet(k)    { try { const r=await window.storage.get(k);    return r?JSON.parse(r.value):null; } catch { return null; } }
-async function storageSet(k,v)  { try { await window.storage.set(k,JSON.stringify(v)); return true; } catch { return false; } }
-async function storageDel(k)    { try { await window.storage.delete(k); return true; } catch { return false; } }
-async function storageList(pfx) { try { const r=await window.storage.list(pfx); return r?r.keys:[]; } catch { return []; } }
+// ─── Storage (window.storage for Claude, localStorage fallback for browsers) ───
+const USE_CLAUDE_STORAGE = typeof window !== "undefined" && window.storage && typeof window.storage.get === "function";
+
+async function storageGet(k) {
+  if (USE_CLAUDE_STORAGE) {
+    try { const r=await window.storage.get(k); return r?JSON.parse(r.value):null; } catch { return null; }
+  }
+  try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch { return null; }
+}
+
+async function storageSet(k,v) {
+  if (USE_CLAUDE_STORAGE) {
+    try { await window.storage.set(k,JSON.stringify(v)); return true; } catch { return false; }
+  }
+  try { localStorage.setItem(k,JSON.stringify(v)); return true; } catch { return false; }
+}
+
+async function storageDel(k) {
+  if (USE_CLAUDE_STORAGE) {
+    try { await window.storage.delete(k); return true; } catch { return false; }
+  }
+  try { localStorage.removeItem(k); return true; } catch { return false; }
+}
+
+async function storageList(pfx) {
+  if (USE_CLAUDE_STORAGE) {
+    try { const r=await window.storage.list(pfx); return r?r.keys:[]; } catch { return []; }
+  }
+  try {
+    const keys=[];
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(k&&k.startsWith(pfx)) keys.push(k);
+    }
+    return keys;
+  } catch { return []; }
+}
 
 // ─── File helpers ─────────────────────────────────────────────────────────────
 function readFileAsBase64(file) { return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); }); }
@@ -54,125 +86,209 @@ function personLabel(p, people) {
   return p.name + extra;
 }
 
-// ─── Layout ───────────────────────────────────────────────────────────────────
-function buildLayout(people, rels) {
-  if (!people.length) return { pos:{}, bbox:{x0:0,y0:0,w:400,h:300} };
+// ─── Layout — Walker / Reingold-Tilford family tree ─────────────────────────
+//
+//  True family-tree layout:
+//   • Every person occupies exactly one rank (row)
+//   • Spouses sit side-by-side on the same row
+//   • Children are centred under their couple's midpoint
+//   • A horizontal "connector bar" joins couple→children
+//   • No overlaps, minimum crossings
+//   • Algorithm: assign subtree widths bottom-up, then position top-down
 
-  // Build adjacency maps
-  const down={}, up={}, lat={};
-  people.forEach(p=>{ down[p.id]=[]; up[p.id]=[]; lat[p.id]=[]; });
+function buildLayout(people, rels) {
+  if (!people.length) return { pos:{}, couplePoints:{}, bbox:{x0:0,y0:0,w:400,h:300} };
+
+  const SLOT = NW + MIN_GAP;
+
+  // ── 1. Adjacency ───────────────────────────────────────────────────────────
+  const childrenOf={}, parentsOf={}, spouseOf={};
+  people.forEach(p=>{ childrenOf[p.id]=[]; parentsOf[p.id]=[]; spouseOf[p.id]=[]; });
   rels.forEach(({type,p1,p2})=>{
-    if (!people.find(p=>p.id===p1) || !people.find(p=>p.id===p2)) return;
-    if (VERTICAL.has(type)) {
-      if (!down[p1].includes(p2)) down[p1].push(p2);
-      if (!up[p2].includes(p1))   up[p2].push(p1);
-    } else if (HORIZONTAL.has(type)) {
-      if (!lat[p1].includes(p2)) lat[p1].push(p2);
-      if (!lat[p2].includes(p1)) lat[p2].push(p1);
+    if(!people.find(p=>p.id===p1)||!people.find(p=>p.id===p2)) return;
+    if(VERTICAL.has(type)){
+      if(!childrenOf[p1].includes(p2)) childrenOf[p1].push(p2);
+      if(!parentsOf[p2].includes(p1))  parentsOf[p2].push(p1);
+    } else if(type==="spouse"){
+      if(!spouseOf[p1].includes(p2)) spouseOf[p1].push(p2);
+      if(!spouseOf[p2].includes(p1)) spouseOf[p2].push(p1);
     }
   });
 
-  // STEP 1: Assign levels via topological sort (level = max parent level + 1)
-  const lev = {};
-  const roots = people.filter(p => !up[p.id].length).map(p => p.id);
-
-  // Iterative level assignment - keep pushing until stable
-  roots.forEach(id => { lev[id] = 0; });
-  people.forEach(p => { if (lev[p.id] === undefined) lev[p.id] = 0; });
-
-  let changed = true;
-  let iter = 0;
-  while (changed && iter < 20) {
-    changed = false; iter++;
-    people.forEach(p => {
-      const parentLevels = (up[p.id] || []).map(pid => lev[pid] ?? 0);
-      const needed = parentLevels.length > 0 ? Math.max(...parentLevels) + 1 : lev[p.id] ?? 0;
-      if ((lev[p.id] ?? 0) < needed) { lev[p.id] = needed; changed = true; }
+  // ── 2. Rank (generation) assignment ───────────────────────────────────────
+  const rank={};
+  people.forEach(p=>{ rank[p.id]=parentsOf[p.id].length===0?0:-1; });
+  let ch=true,it=0;
+  while(ch&&it++<40){ ch=false;
+    people.forEach(p=>{
+      const pr=parentsOf[p.id].map(id=>rank[id]).filter(r=>r>=0);
+      if(!pr.length) return;
+      const need=Math.max(...pr)+1;
+      if((rank[p.id]??-1)<need){ rank[p.id]=need; ch=true; }
     });
   }
-
-  // STEP 2: Snap spouses/siblings to same level (take the maximum)
-  changed = true; iter = 0;
-  while (changed && iter < 10) {
-    changed = false; iter++;
-    people.forEach(p => {
-      (lat[p.id] || []).forEach(lid => {
-        const nl = Math.max(lev[p.id] ?? 0, lev[lid] ?? 0);
-        if (lev[p.id] !== nl) { lev[p.id] = nl; changed = true; }
-        if (lev[lid] !== nl) { lev[lid] = nl; changed = true; }
-      });
-    });
+  people.forEach(p=>{ if(rank[p.id]<0) rank[p.id]=0; });
+  // Spouses share same rank (max)
+  ch=true;it=0;
+  while(ch&&it++<15){ ch=false;
+    people.forEach(p=>{ spouseOf[p.id].forEach(s=>{
+      const nr=Math.max(rank[p.id],rank[s]);
+      if(rank[p.id]!==nr){rank[p.id]=nr;ch=true;}
+      if(rank[s]!==nr){rank[s]=nr;ch=true;}
+    }); });
   }
-
-  // STEP 3: Re-check children are below their parents after lat-snap
-  changed = true; iter = 0;
-  while (changed && iter < 10) {
-    changed = false; iter++;
-    people.forEach(p => {
-      (down[p.id] || []).forEach(cid => {
-        const needed = (lev[p.id] ?? 0) + 1;
-        if ((lev[cid] ?? 0) < needed) { lev[cid] = needed; changed = true; }
-      });
-    });
+  // Children strictly below all parents
+  ch=true;it=0;
+  while(ch&&it++<20){ ch=false;
+    people.forEach(p=>{ childrenOf[p.id].forEach(cid=>{
+      const need=rank[p.id]+1;
+      if(rank[cid]<need){rank[cid]=need;ch=true;}
+    }); });
   }
+  // Compact to 0,1,2,...
+  const used=[...new Set(Object.values(rank))].sort((a,b)=>a-b);
+  const rm={}; used.forEach((r,i)=>rm[r]=i);
+  people.forEach(p=>{ rank[p.id]=rm[rank[p.id]]??0; });
 
-  // STEP 4: Compact levels — remap to consecutive integers 0,1,2,...
-  const usedLevels = [...new Set(Object.values(lev))].sort((a,b)=>a-b);
-  const levelMap = {};
-  usedLevels.forEach((l,i) => { levelMap[l] = i; });
-  people.forEach(p => { lev[p.id] = levelMap[lev[p.id] ?? 0]; });
+  // ── 3. Build "family units" ────────────────────────────────────────────────
+  // A family unit = one couple + their shared children
+  // Single parents (no spouse) also form a unit
+  const units=[];  // {id, members:[id,...], children:[id,...], coupleIds:[id,...]}
+  const unitOf={};  // personId → unit
 
-  // STEP 5: Group by level
-  const byLev = {};
-  people.forEach(p => {
-    const l = lev[p.id] ?? 0;
-    (byLev[l] = byLev[l] || []).push(p.id);
+  const pairedDone=new Set();
+  people.forEach(p=>{
+    const spouses=spouseOf[p.id].filter(s=>rank[s]===rank[p.id]);
+    if(spouses.length && !pairedDone.has(p.id)){
+      const s=spouses[0];
+      pairedDone.add(p.id); pairedDone.add(s);
+      const shared=childrenOf[p.id].filter(c=>parentsOf[c].includes(s));
+      const uid="u:"+[p.id,s].sort().join("|");
+      units.push({id:uid,members:[p.id,s],children:shared});
+      unitOf[p.id]=uid; unitOf[s]=uid;
+    }
+  });
+  // Solo people not yet in a unit
+  people.forEach(p=>{
+    if(unitOf[p.id]) return;
+    const uid="u:"+p.id;
+    const soloChildren=childrenOf[p.id].filter(c=>!parentsOf[c].some(pid=>pid!==p.id&&unitOf[pid]===unitOf[p.id]));
+    units.push({id:uid,members:[p.id],children:childrenOf[p.id]});
+    unitOf[p.id]=uid;
   });
 
-  // STEP 6: Position nodes — cluster spouses/siblings together
-  const pos = {};
-  const SLOT = NW + MIN_GAP; // guaranteed slot width per node
+  // ── 4. Subtree width (bottom-up) ──────────────────────────────────────────
+  // subW[unitId] = minimum width in SLOT units needed by this unit + all descendants
+  const subW={};
+  const byRank={};
+  people.forEach(p=>{ const r=rank[p.id]; (byRank[r]=byRank[r]||new Set()).add(p.id); });
+  const maxRank=Math.max(...Object.keys(byRank).map(Number));
 
-  Object.keys(byLev).sort((a,b)=>+a-+b).forEach(l => {
-    const ids = byLev[l];
-    // Build clusters of lateral peers
-    const clustered = new Set(), groups = [];
-    ids.forEach(id => {
-      if (clustered.has(id)) return;
-      const cluster = [id]; clustered.add(id);
-      const bfs = [id];
-      while (bfs.length) {
-        const cur = bfs.shift();
-        (lat[cur] || []).forEach(lid => {
-          if (!clustered.has(lid) && ids.includes(lid)) {
-            cluster.push(lid); clustered.add(lid); bfs.push(lid);
-          }
-        });
-      }
-      groups.push(cluster);
+  // Process bottom-up
+  for(let r=maxRank;r>=0;r--){
+    const unitsAtRank=new Set([...(byRank[r]||[])].map(id=>unitOf[id]).filter(Boolean));
+    unitsAtRank.forEach(uid=>{
+      const unit=units.find(u=>u.id===uid); if(!unit) return;
+      const ownW=unit.members.length*SLOT;
+      // Children's subtree widths (children may belong to units at deeper rank)
+      const childUnits=[...new Set(unit.children.map(c=>unitOf[c]).filter(Boolean))];
+      const childW=childUnits.reduce((s,cu)=>{
+        const cUnit=units.find(u=>u.id===cu);
+        return s+(subW[cu]??((cUnit?.members.length||1)*SLOT));
+      },0)+(Math.max(0,childUnits.length-1))*MIN_GAP;
+      subW[uid]=Math.max(ownW,childW);
     });
+  }
 
-    // Total width: each node gets SLOT, spouse pairs get SLOT each
-    const totalNodes = ids.length;
-    const totalW = totalNodes * SLOT;
-    let x = -totalW / 2;
-    const y = +l * (NH + VGAP);
+  // ── 5. X assignment (top-down) ────────────────────────────────────────────
+  const posX={};
+  const unitX={};  // unitId → left edge of unit's allocated space
 
-    groups.forEach(group => {
-      group.forEach((id, i) => {
-        pos[id] = { x: x + i * SLOT + NW / 2, y: y + NH / 2 };
+  // Roots: units at rank 0
+  const rootUnits=[...new Set([...(byRank[0]||[])].map(id=>unitOf[id]).filter(Boolean))];
+  let cursor=0;
+  rootUnits.forEach(uid=>{
+    unitX[uid]=cursor;
+    cursor+=(subW[uid]??SLOT)+MIN_GAP*2;
+  });
+
+  // Top-down: place unit members, then distribute children
+  for(let r=0;r<=maxRank;r++){
+    const unitsAtRank=[...new Set([...(byRank[r]||[])].map(id=>unitOf[id]).filter(Boolean))];
+    unitsAtRank.forEach(uid=>{
+      const unit=units.find(u=>u.id===uid); if(!unit) return;
+      const ux=unitX[uid]??0;
+      const uw=subW[uid]??SLOT;
+      // Place members centred in their allocated width
+      const membW=(unit.members.length-1)*SLOT;
+      const membStart=ux+uw/2-membW/2;
+      unit.members.forEach((id,i)=>{ posX[id]=membStart+i*SLOT; });
+
+      // Distribute children's units in remaining width
+      if(!unit.children.length) return;
+      const childUnits=[...new Set(unit.children.map(c=>unitOf[c]).filter(Boolean))];
+      const totalChildW=childUnits.reduce((s,cu)=>s+(subW[cu]??SLOT),0)+(childUnits.length-1)*MIN_GAP;
+      let cx=ux+uw/2-totalChildW/2;
+      childUnits.forEach(cu=>{
+        unitX[cu]=cx;
+        cx+=(subW[cu]??SLOT)+MIN_GAP;
       });
-      x += group.length * SLOT;
+    });
+  }
+
+  // ── 6. Resolve any remaining overlaps per rank ────────────────────────────
+  Object.keys(byRank).forEach(r=>{
+    const ids=[...(byRank[r]||[])].sort((a,b)=>(posX[a]??0)-(posX[b]??0));
+    let minX=-Infinity;
+    ids.forEach(id=>{
+      if((posX[id]??0)<minX+SLOT) posX[id]=minX+SLOT;
+      minX=posX[id]??0;
     });
   });
 
-  const xs = Object.values(pos).map(p => p.x);
-  const ys = Object.values(pos).map(p => p.y);
-  const x0 = Math.min(...xs) - NW/2 - 30;
-  const x1 = Math.max(...xs) + NW/2 + 30;
-  const y0 = Math.min(...ys) - NH/2 - 30;
-  const y1 = Math.max(...ys) + NH/2 + 30;
-  return { pos, bbox: { x0, y0, w: x1-x0, h: y1-y0 } };
+  // Re-centre spouse pairs after overlap fix
+  units.forEach(unit=>{
+    if(unit.members.length<2) return;
+    // If children exist, re-centre over them
+    const childXs=unit.children.map(c=>posX[c]).filter(x=>x!=null);
+    if(childXs.length){
+      const cCentre=(Math.min(...childXs)+Math.max(...childXs))/2;
+      const membW=(unit.members.length-1)*SLOT;
+      unit.members.forEach((id,i)=>{ posX[id]=cCentre-membW/2+i*SLOT; });
+    }
+  });
+
+  // ── 7. Centre whole tree ───────────────────────────────────────────────────
+  const allX=Object.values(posX);
+  const treeMin=Math.min(...allX), treeMax=Math.max(...allX);
+  const shift=-((treeMin+treeMax)/2);
+  people.forEach(p=>{ posX[p.id]=(posX[p.id]??0)+shift; });
+
+  // ── 8. Build pos & couplePoints ───────────────────────────────────────────
+  const pos={};
+  people.forEach(p=>{ pos[p.id]={ x:posX[p.id]??0, y:rank[p.id]*(NH+VGAP)+NH/2 }; });
+
+  const couplePoints={};
+  units.forEach(unit=>{
+    if(unit.members.length>=2){
+      const [p1,p2]=unit.members;
+      const a=pos[p1],b=pos[p2];
+      if(a&&b) couplePoints[unit.id]={x:(a.x+b.x)/2, y:a.y, children:unit.children, p1,p2};
+    }
+  });
+
+  // ── 9. Bounding box ───────────────────────────────────────────────────────
+  const xs=Object.values(pos).map(p=>p.x);
+  const ys=Object.values(pos).map(p=>p.y);
+  return {
+    pos, couplePoints,
+    bbox:{
+      x0:Math.min(...xs)-NW/2-30,
+      y0:Math.min(...ys)-NH/2-30,
+      w:Math.max(...xs)-Math.min(...xs)+NW+60,
+      h:Math.max(...ys)-Math.min(...ys)+NH+60
+    }
+  };
 }
 
 // ─── SVG Node ─────────────────────────────────────────────────────────────────
@@ -219,7 +335,7 @@ function Canvas({people,rels,selId,onSelect}) {
   const [vp,setVp]=useState({x:0,y:0,s:1});
   const [sz,setSz]=useState({w:360,h:480});
   const drag=useRef({on:false,lx:0,ly:0,pinch:false,ld:0});
-  const {pos,bbox}=buildLayout(people,rels);
+  const {pos,couplePoints,bbox}=buildLayout(people,rels);
 
   const fit=useCallback((w,h)=>{
     if(!bbox.w||!bbox.h) return {x:w/2,y:50,s:1};
@@ -248,16 +364,61 @@ function Canvas({people,rels,selId,onSelect}) {
   const wh=e=>{ e.preventDefault(); const f=e.deltaY<0?1.1:0.91; const nv={...vpRef.current,s:Math.min(3,Math.max(0.2,vpRef.current.s*f))}; vpRef.current=nv; setVp({...nv}); };
   const doFit=()=>{ const v=fit(sz.w,sz.h); vpRef.current=v; setVp(v); };
 
-  const drawn=new Set();
-  const lines=rels.map(r=>{
-    const a=pos[r.p1],b=pos[r.p2]; if(!a||!b) return null;
-    const def=RMAP[r.type]||{},col=def.color||"#94a3b8";
-    if(HORIZONTAL.has(r.type)){ const key=[r.p1,r.p2].sort().join("|")+r.type; if(drawn.has(key)) return null; drawn.add(key); const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
-      return(<g key={"h-"+key}><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={col} strokeWidth={2} strokeDasharray={r.type==="spouse"?"6 3":"none"} opacity={0.75}/>{r.type==="spouse"&&<text x={mx} y={my-5} textAnchor="middle" fontSize={12} fill={col}>♥</text>}</g>); }
-    if(VERTICAL.has(r.type)){ const dash=r.type==="grandparent"?"7 4":r.type==="uncle"?"3 3":"none"; const cy=(a.y+b.y)/2;
-      return <path key={"v-"+r.id} d={"M"+a.x+","+(a.y+NH/2)+" C"+a.x+","+(cy+18)+" "+b.x+","+(cy-18)+" "+b.x+","+(b.y-NH/2)} fill="none" stroke={col} strokeWidth={2} strokeDasharray={dash} opacity={0.8}/>; }
-    return null;
+  // ── Draw edges using couple midpoints ─────────────────────────────────────
+  const spouseColor = RMAP["spouse"]?.color || "#f59e0b";
+  const parentColor = RMAP["parent"]?.color || "#6366f1";
+
+  const edgeElements = [];
+  const drawnSpouse = new Set();
+
+  // 1. Spouse lines (horizontal, dashed, with ♥ at midpoint)
+  rels.filter(r=>r.type==="spouse").forEach(r=>{
+    const key=[r.p1,r.p2].sort().join("|");
+    if(drawnSpouse.has(key)) return; drawnSpouse.add(key);
+    const a=pos[r.p1], b=pos[r.p2]; if(!a||!b) return;
+    const mx=(a.x+b.x)/2, my=a.y;
+    edgeElements.push(
+      <g key={"sp-"+key}>
+        <line x1={a.x} y1={my} x2={b.x} y2={my} stroke={spouseColor} strokeWidth={2} strokeDasharray="6 3" opacity={0.85}/>
+        <circle cx={mx} cy={my} r={8} fill={spouseColor} opacity={0.15}/>
+        <text x={mx} y={my+4} textAnchor="middle" fontSize={11} fill={spouseColor}>♥</text>
+      </g>
+    );
   });
+
+  // 2. Parent→child edges: from couple midpoint down to child
+  //    If child has two parents who are a couple → edge from couple centre
+  //    If child has only one known parent → edge from that parent
+  const drawnParent = new Set();
+  rels.filter(r=>VERTICAL.has(r.type)).forEach(r=>{
+    if(drawnParent.has(r.id)) return; drawnParent.add(r.id);
+    const child=pos[r.p2]; if(!child) return;
+    const col = (RMAP[r.type]?.color) || parentColor;
+    const dash = r.type==="grandparent"?"7 4":r.type==="uncle"?"3 3":"none";
+
+    // Find if there's a couple point for parent r.p1 + a co-parent
+    const coParents = (rels.filter(r2=>VERTICAL.has(r2.type)&&r2.p2===r.p2&&r2.p1!==r.p1).map(r2=>r2.p1));
+    const coupleKey = coParents.length
+      ? "couple:"+[r.p1,...coParents].flatMap(a=>[r.p1,...coParents].map(b=>a<b?a+"|"+b:b+"|"+a)).find(k=>couplePoints[k])
+      : null;
+    const cp = Object.values(couplePoints).find(cp=>
+      (cp.p1===r.p1||cp.p2===r.p1) && cp.children.includes(r.p2)
+    );
+
+    const fromX = cp ? cp.x : (pos[r.p1]?.x ?? 0);
+    const fromY = cp ? cp.y : (pos[r.p1]?.y ?? 0);
+    const fy = fromY + NH/2 + 6;
+    const ty = child.y - NH/2 - 4;
+    const cy = (fy+ty)/2;
+
+    edgeElements.push(
+      <path key={"pc-"+r.id}
+        d={"M"+fromX+","+fy+" C"+fromX+","+cy+" "+child.x+","+cy+" "+child.x+","+ty}
+        fill="none" stroke={col} strokeWidth={1.8} strokeDasharray={dash} opacity={0.75}/>
+    );
+  });
+
+  const lines = edgeElements;
 
   return (
     <div ref={wrapRef} style={{position:"relative",width:"100%",height:"100%",background:"#f0f4ff",borderRadius:14,overflow:"hidden",border:"1px solid #d1d9f0"}}>
@@ -308,6 +469,92 @@ function DragList({items,onReorder,renderItem}) {
           {renderItem(item,i)}
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── Searchable Select ────────────────────────────────────────────────────────
+function SearchSelect({value, onChange, options, placeholder}) {
+  const [query, setQuery]   = useState("");
+  const [open,  setOpen]    = useState(false);
+  const wrapRef             = useRef(null);
+
+  const filtered = options.filter(o =>
+    o.label.toLowerCase().includes(query.toLowerCase())
+  );
+  const selected = options.find(o => o.value === value);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = e => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const inp = {
+    background:"#f8faff", border:"1px solid #e2e8f0", borderRadius:8,
+    color:"#1e293b", padding:"11px 13px", fontSize:15, outline:"none",
+    width:"100%", fontFamily:FONT,
+  };
+
+  return (
+    <div ref={wrapRef} style={{position:"relative",width:"100%"}}>
+      {/* Trigger */}
+      <div
+        onClick={() => { setOpen(o => !o); setQuery(""); }}
+        style={{...inp, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between", userSelect:"none"}}
+      >
+        <span style={{color: selected ? "#1e293b" : "#94a3b8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+          {selected ? selected.label : (placeholder || "Seçin…")}
+        </span>
+        <span style={{color:"#94a3b8", fontSize:12, marginLeft:8, flexShrink:0}}>{open ? "▲" : "▼"}</span>
+      </div>
+
+      {/* Dropdown */}
+      {open && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 4px)", left:0, right:0, zIndex:2000,
+          background:"#ffffff", border:"1px solid #e2e8f0", borderRadius:12,
+          boxShadow:"0 8px 24px rgba(99,102,241,0.15)", overflow:"hidden",
+        }}>
+          {/* Search input */}
+          <div style={{padding:"8px 10px", borderBottom:"1px solid #f1f5f9"}}>
+            <input
+              autoFocus
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Ara…"
+              style={{...inp, padding:"8px 11px", fontSize:14, background:"#f8faff"}}
+              onClick={e => e.stopPropagation()}
+            />
+          </div>
+          {/* Options */}
+          <div style={{maxHeight:220, overflowY:"auto"}}>
+            {filtered.length === 0
+              ? <div style={{padding:"12px 14px", color:"#94a3b8", fontSize:14, fontFamily:FONT}}>Sonuç bulunamadı</div>
+              : filtered.map(o => (
+                  <div
+                    key={o.value}
+                    onClick={() => { onChange(o.value); setOpen(false); setQuery(""); }}
+                    style={{
+                      padding:"10px 14px", cursor:"pointer", fontSize:14, fontFamily:FONT,
+                      background: o.value === value ? "#eef2ff" : "transparent",
+                      color: o.value === value ? "#6366f1" : "#1e293b",
+                      fontWeight: o.value === value ? 600 : 400,
+                      borderBottom:"1px solid #f8faff",
+                    }}
+                    onMouseEnter={e => { if(o.value !== value) e.currentTarget.style.background="#f8faff"; }}
+                    onMouseLeave={e => { if(o.value !== value) e.currentTarget.style.background="transparent"; }}
+                  >
+                    {o.label}
+                  </div>
+                ))
+            }
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -416,16 +663,20 @@ function RelModal({rel,people,onSave,onClose}) {
           </div>
           {relDef.bi&&<div style={{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:10,padding:"10px 13px",fontSize:13,color:"#4f46e5",fontFamily:FONT}}>ℹ️ Çift yönlü — tek kez tanımlamanız yeterlidir.</div>}
           <div><label style={lbl}>{relDef.bi?"KİŞİ 1 ":"ÜSTTEKI (Ebeveyn / Büyükanne / Amca vb.)"}</label>
-            <select style={inp} value={form.p1} onChange={e=>set("p1",e.target.value)}>
-              <option value="">Seçin…</option>
-              {people.map(p=><option key={p.id} value={p.id}>{optLabel(p)}</option>)}
-            </select>
+            <SearchSelect
+              value={form.p1}
+              onChange={v=>set("p1",v)}
+              placeholder="Kişi seçin veya arayın…"
+              options={people.map(p=>({value:p.id,label:optLabel(p)}))}
+            />
           </div>
           <div><label style={lbl}>{relDef.bi?"KİŞİ 2":"ALTTAKİ (Çocuk / Torun / Yeğen vb.)"}</label>
-            <select style={inp} value={form.p2} onChange={e=>set("p2",e.target.value)}>
-              <option value="">Seçin…</option>
-              {people.filter(p=>p.id!==form.p1).map(p=><option key={p.id} value={p.id}>{optLabel(p)}</option>)}
-            </select>
+            <SearchSelect
+              value={form.p2}
+              onChange={v=>set("p2",v)}
+              placeholder="Kişi seçin veya arayın…"
+              options={people.filter(p=>p.id!==form.p1).map(p=>({value:p.id,label:optLabel(p)}))}
+            />
           </div>
           <div style={{display:"flex",gap:10,marginTop:4}}>
             <button onClick={handleSave} disabled={!form.p1||!form.p2||form.p1===form.p2} style={{flex:1,background:"#6366f1",border:"1px solid #6366f1",borderRadius:10,color:"#ffffff",padding:"13px",fontSize:15,cursor:"pointer",fontWeight:700,opacity:(form.p1&&form.p2&&form.p1!==form.p2)?1:0.5,fontFamily:FONT}}>{isEdit?"💾 Güncelle":"✓ Ekle"}</button>
@@ -585,8 +836,21 @@ function TreeEditor({tree,onSave,onBack}) {
   const [confirmPerson,setConfirmPerson]=useState(null);
   const [confirmRel,setConfirmRel]=useState(null);
   const [showPrint,setShowPrint]=useState(false);
+  const [peopleSearch,setPeopleSearch]=useState("");
+  const [relsSearch,setRelsSearch]=useState("");
 
   const selPerson=people.find(p=>p.id===selId);
+  const filteredPeople=peopleSearch.trim()
+    ? people.filter(p=>p.name.toLowerCase().includes(peopleSearch.toLowerCase())||(p.born||"").includes(peopleSearch))
+    : people;
+  const filteredRels=relsSearch.trim()
+    ? rels.filter(r=>{
+        const n1=(people.find(p=>p.id===r.p1)||{}).name||"";
+        const n2=(people.find(p=>p.id===r.p2)||{}).name||"";
+        const lbl=(RMAP[r.type]||{}).label||"";
+        return [n1,n2,lbl].some(s=>s.toLowerCase().includes(relsSearch.toLowerCase()));
+      })
+    : rels;
 
   // Attach rels to people for label disambiguation
   const peopleWithRels=[...people];
@@ -661,16 +925,36 @@ function TreeEditor({tree,onSave,onBack}) {
         {/* ── Kişiler ── */}
         {tab==="kişiler"&&(
           <div style={{flex:1,overflow:"auto",padding:14}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <span style={{fontSize:14,color:"#64748b",fontWeight:600}}>👥 KİŞİLER ({people.length})</span>
               <button onClick={openAddPerson} style={btn(true,true)}>+ Yeni Kişi</button>
             </div>
-            <div style={{fontSize:12,color:"#94a3b8",marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
+            <div style={{position:"relative",marginBottom:10}}>
+              <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#94a3b8",fontSize:15,pointerEvents:"none"}}>🔍</span>
+              <input
+                value={peopleSearch} onChange={e=>setPeopleSearch(e.target.value)}
+                placeholder="İsme göre ara…"
+                style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"9px 12px 9px 34px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT}}
+              />
+              {peopleSearch&&<button onClick={()=>setPeopleSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:16,lineHeight:1}}>✕</button>}
+            </div>
+            {filteredPeople.length===0&&peopleSearch&&<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{peopleSearch}" için sonuç yok</div>}
+            <div style={{fontSize:12,color:"#94a3b8",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
               <span>⠿</span> Sürükle-bırak ile sırala
             </div>
             <DragList
-              items={people}
-              onReorder={setPeople}
+              items={filteredPeople}
+              onReorder={filtered=>{
+                // Merge filtered reorder back into full list preserving non-filtered order
+                if(!peopleSearch.trim()){ setPeople(filtered); return; }
+                const filteredIds=filtered.map(p=>p.id);
+                const rest=people.filter(p=>!filteredIds.includes(p.id));
+                // Re-insert filtered at their original positions
+                const newList=[...people];
+                let fi=0;
+                newList.forEach((_,i)=>{ if(filteredIds.includes(newList[i].id)){ newList[i]=filtered[fi++]; } });
+                setPeople(newList);
+              }}
               renderItem={(p)=>(
                 <div style={{background:"#ffffff",border:"1px solid "+(selId===p.id?"#6366f1":"#e2e8f0"),borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",boxShadow:"0 1px 4px rgba(99,102,241,0.05)"}} onClick={()=>setSelId(p.id===selId?null:p.id)}>
                   <span style={{color:"#d1d9f0",fontSize:18,cursor:"grab",flexShrink:0}}>⠿</span>
@@ -697,16 +981,33 @@ function TreeEditor({tree,onSave,onBack}) {
         {/* ── İlişkiler ── */}
         {tab==="ilişkiler"&&(
           <div style={{flex:1,overflow:"auto",padding:14}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <span style={{fontSize:14,color:"#64748b",fontWeight:600}}>🔗 İLİŞKİLER ({rels.length})</span>
               <button onClick={openAddRel} style={btn(true,true)}>+ Yeni İlişki</button>
             </div>
-            <div style={{fontSize:12,color:"#94a3b8",marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
+            <div style={{position:"relative",marginBottom:10}}>
+              <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#94a3b8",fontSize:15,pointerEvents:"none"}}>🔍</span>
+              <input
+                value={relsSearch} onChange={e=>setRelsSearch(e.target.value)}
+                placeholder="İsim veya ilişki türü ara…"
+                style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"9px 12px 9px 34px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT}}
+              />
+              {relsSearch&&<button onClick={()=>setRelsSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:16,lineHeight:1}}>✕</button>}
+            </div>
+            {filteredRels.length===0&&relsSearch&&<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{relsSearch}" için sonuç yok</div>}
+            <div style={{fontSize:12,color:"#94a3b8",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
               <span>⠿</span> Sürükle-bırak ile sırala
             </div>
             <DragList
-              items={rels}
-              onReorder={setRels}
+              items={filteredRels}
+              onReorder={filtered=>{
+                if(!relsSearch.trim()){ setRels(filtered); return; }
+                const filteredIds=filtered.map(r=>r.id);
+                const newList=[...rels];
+                let fi=0;
+                newList.forEach((_,i)=>{ if(filteredIds.includes(newList[i].id)){ newList[i]=filtered[fi++]; } });
+                setRels(newList);
+              }}
               renderItem={(r)=>{ const d=RMAP[r.type]||{}; return(
                 <div style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 1px 4px rgba(99,102,241,0.05)"}}>
                   <span style={{color:"#d1d9f0",fontSize:18,cursor:"grab",flexShrink:0}}>⠿</span>
