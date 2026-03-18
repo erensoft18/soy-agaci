@@ -1079,7 +1079,7 @@ function buildTreeSVGString(people, rels) {
     }
   });
 
-  const svgString = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="'+minX+' '+minY+' '+W+' '+H+'" width="'+W+'" height="'+H+'" style="background:#f0f4ff">'
+  const svgString = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="'+minX+' '+minY+' '+W+' '+H+'" width="'+W+'" height="'+H+'" style="background:#ffffff">'
     + '<defs>'+defs.join("")+'</defs>'
     + lines.join("")
     + nodes.join("")
@@ -1089,7 +1089,7 @@ function buildTreeSVGString(people, rels) {
 }
 
 async function svgToDataUrl(svgString) {
-  return new Promise((res,rej)=>{ const blob=new Blob([svgString],{type:"image/svg+xml"}); const url=URL.createObjectURL(blob); const img=new Image(); img.onload=()=>{ const scale=Math.min(2400/img.naturalWidth,1600/img.naturalHeight,2); const canvas=document.createElement("canvas"); canvas.width=img.naturalWidth*scale; canvas.height=img.naturalHeight*scale; const ctx=canvas.getContext("2d"); ctx.fillStyle="#f0f4ff"; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.scale(scale,scale); ctx.drawImage(img,0,0); URL.revokeObjectURL(url); res(canvas.toDataURL("image/png")); }; img.onerror=rej; img.src=url; });
+  return new Promise((res,rej)=>{ const blob=new Blob([svgString],{type:"image/svg+xml"}); const url=URL.createObjectURL(blob); const img=new Image(); img.onload=()=>{ const scale=Math.min(2400/img.naturalWidth,1600/img.naturalHeight,2); const canvas=document.createElement("canvas"); canvas.width=img.naturalWidth*scale; canvas.height=img.naturalHeight*scale; const ctx=canvas.getContext("2d"); ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.scale(scale,scale); ctx.drawImage(img,0,0); URL.revokeObjectURL(url); res(canvas.toDataURL("image/png")); }; img.onerror=rej; img.src=url; });
 }
 
 function buildPrintHTML(tree, tileImgs, title) {
@@ -1101,18 +1101,14 @@ function buildPrintHTML(tree, tileImgs, title) {
 
   const pageHtmls = tileImgs.map((tile, i) => {
     const imgHtml = tile
-      ? '<img src="' + tile.dataUrl + '" style="width:100%;height:auto;object-fit:contain;display:block;max-height:185mm"/>'
+      ? '<img src="' + tile.dataUrl + '" style="width:100%;height:auto;object-fit:contain;display:block;"/>'
       : '<p style="text-align:center;color:#999;padding:40px 0">Diyagram oluşturulamadı</p>';
-    const isLast = i === tileImgs.length - 1;
+    const pageInfo = displayTitle + ' &middot; Soy Ağacı &middot; ' + today + ' &middot; ' + people.length + ' kişi'
+      + (tileImgs.length > 1 ? ' &middot; ' + (i+1) + '/' + tileImgs.length : '');
     return [
       '<div class="page">',
-      '  <div class="header">',
-      '    <h1>' + displayTitle + (tileImgs.length>1?' <span style="font-size:12pt;color:#64748b;font-weight:400">'+(i+1)+'/'+tileImgs.length+'</span>':'') + '</h1>',
-      '    <p>Soy Ağacı &middot; ' + today + ' &middot; ' + people.length + ' kişi</p>',
-      '  </div>',
-      '  <hr class="divider"/>',
       '  <div class="diagram">' + imgHtml + '</div>',
-      '  <div class="footer">Yazdırıldı: ' + today + '</div>',
+      '  <div class="footer">' + pageInfo + '</div>',
       '</div>',
     ].join('\n');
   });
@@ -1126,14 +1122,10 @@ function buildPrintHTML(tree, tileImgs, title) {
     '<style>',
     '  * { box-sizing:border-box; margin:0; padding:0; font-family:sans-serif; }',
     '  body { background:white; }',
-    '  .page { padding:10mm 12mm; display:flex; flex-direction:column; align-items:center; page-break-after:always; break-after:page; }',
+    '  .page { padding:8mm 10mm; display:flex; flex-direction:column; page-break-after:always; break-after:page; min-height:calc(100vh - 16mm); }',
     '  .page:last-child { page-break-after:avoid; break-after:avoid; }',
-    '  .header { text-align:center; margin-bottom:8mm; width:100%; }',
-    '  .header h1 { font-size:18pt; font-weight:700; color:#1e293b; }',
-    '  .header p  { font-size:9pt; color:#64748b; margin-top:3px; }',
-    '  .divider { border:none; border-top:1px solid #d1d9f0; width:100%; margin-bottom:6mm; }',
-    '  .diagram { width:100%; }',
-    '  .footer { font-size:8pt; color:#94a3b8; text-align:right; margin-top:6mm; width:100%; }',
+    '  .diagram { flex:1; width:100%; }',
+    '  .footer { font-size:7pt; color:#94a3b8; text-align:left; margin-top:4mm; width:100%; }',
     '  @media print { @page { margin:6mm; size:A4 landscape; } }',
     '</style>',
     '</head>',
