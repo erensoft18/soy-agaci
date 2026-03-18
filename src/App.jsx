@@ -359,8 +359,11 @@ function Node({person,p,sel,onClick,outsider}) {
   const fn = firstName.length > maxCh ? firstName.slice(0,maxCh-1)+"…" : firstName;
   const sn = surname.length   > maxCh ? surname.slice(0,maxCh-1)+"…"  : surname;
 
-  // Info area: gender colour bg, dark text
-  const infoBg   = sel ? normalBg : normalBg;  // always gender colour
+  // Info area: deeper gender colour bg; outsider = darker
+  const infoBg   = sel ? normalBg
+    : outsider
+      ? (person.gender==="male" ? "#93c5fd" : "#f9a8d4")
+      : (person.gender==="male" ? "#bfdbfe" : "#fbcfe8");
   const nameFill = "#1e293b";
   const yearFill = "#475569";
 
@@ -391,12 +394,9 @@ function Node({person,p,sel,onClick,outsider}) {
         strokeWidth={sel?2.5:2}
         filter={"url(#"+fid+")"}
         opacity={isDead?0.72:1}/>
-      {/* Info area background — gender colour */}
-      <rect x={0} y={PH} width={NW} height={INFO_H}
-        fill={infoBg} rx={0}/>
-      {/* Round bottom corners of info area to match card */}
-      <rect x={0} y={PH} width={NW} height={INFO_H+14} rx={14} fill={infoBg}
-        clipPath={"url(#ncc-"+person.id+")"}/>
+      {/* Info area — flat top, rounded bottom (matches card rx=14) */}
+      <path d={"M0,"+PH+" L"+NW+","+PH+" L"+NW+","+(NH-14)+" Q"+NW+","+NH+" "+(NW-14)+","+NH+" L14,"+NH+" Q0,"+NH+" 0,"+(NH-14)+" Z"}
+        fill={infoBg}/>
 
       {/* ── Photo area (top) ── */}
       {person.photo
@@ -449,11 +449,7 @@ function Node({person,p,sel,onClick,outsider}) {
           </>
       }
 
-      {/* Outsider dashed ring */}
-      {outsider&&!sel&&
-        <rect x={2} y={2} width={NW-4} height={NH-4} rx={12}
-          fill="none" stroke="#1e293b" strokeWidth={2}
-          strokeDasharray="5 3" opacity={0.5}/>}
+
 
       {/* ── Selected ring ── */}
       {sel&&<rect width={NW} height={NH} rx={14} fill="none"
