@@ -346,12 +346,12 @@ function Node({person,p,sel,onClick,outsider}) {
   const isDead   = !!person.died;
 
   // Layout
-  const INFO_H  = 52;              // info section height (white area)
-  const PH      = NH - INFO_H;    // photo area height
+  const INFO_H  = 52;
+  const PH      = NH - INFO_H;
   const cid = "ncp-"+person.id;
   const fid = "nsh-"+person.id;
 
-  // Name split: first name / surname
+  // Name split: first name / surname — both same size & bold
   const parts    = person.name.trim().split(" ");
   const surname  = parts.length > 1 ? parts[parts.length-1] : "";
   const firstName= parts.length > 1 ? parts.slice(0,-1).join(" ") : parts[0];
@@ -359,14 +359,10 @@ function Node({person,p,sel,onClick,outsider}) {
   const fn = firstName.length > maxCh ? firstName.slice(0,maxCh-1)+"…" : firstName;
   const sn = surname.length   > maxCh ? surname.slice(0,maxCh-1)+"…"  : surname;
 
-  // Info area colours (mirrors HTML card)
-  const infoBg   = outsider && !sel
-    ? (person.gender==="male" ? "#1e40af" : "#9d174d")
-    : "#ffffff";
-  const nameFill = outsider && !sel ? "#ffffff" : "#1e293b";
-  const fnFill   = outsider && !sel ? "#bfdbfe" : "#475569";
-  const yearFill = outsider && !sel ? "#bfdbfe" : "#64748b";
-  const cardBg   = sel ? "#eef2ff" : infoBg;
+  // Info area: gender colour bg, dark text
+  const infoBg   = sel ? normalBg : normalBg;  // always gender colour
+  const nameFill = "#1e293b";
+  const yearFill = "#475569";
 
   return (
     <g transform={"translate("+(p.x-NW/2)+","+(p.y-NH/2)+")"} data-node="1"
@@ -388,13 +384,19 @@ function Node({person,p,sel,onClick,outsider}) {
         </filter>
       </defs>
 
-      {/* ── Card background ── */}
+      {/* ── Card background (photo area white, info area = gender colour) ── */}
       <rect width={NW} height={NH} rx={14}
-        fill={infoBg}
-        stroke={sel?"#6366f1":col}
-        strokeWidth={sel?2.5:(outsider?2:1.5)}
+        fill="#ffffff"
+        stroke={sel?"#6366f1":"#1e293b"}
+        strokeWidth={sel?2.5:2}
         filter={"url(#"+fid+")"}
         opacity={isDead?0.72:1}/>
+      {/* Info area background — gender colour */}
+      <rect x={0} y={PH} width={NW} height={INFO_H}
+        fill={infoBg} rx={0}/>
+      {/* Round bottom corners of info area to match card */}
+      <rect x={0} y={PH} width={NW} height={INFO_H+14} rx={14} fill={infoBg}
+        clipPath={"url(#ncc-"+person.id+")"}/>
 
       {/* ── Photo area (top) ── */}
       {person.photo
@@ -413,34 +415,45 @@ function Node({person,p,sel,onClick,outsider}) {
       }
       {/* Vignette border on photo */}
       <rect x={0} y={0} width={NW} height={PH}
-        fill="none" stroke={col} strokeWidth={2.5} strokeOpacity={0.2}
+        fill="none" stroke={col} strokeWidth={2} strokeOpacity={0.2}
         clipPath={"url(#"+cid+")"}/>
 
       {/* ── Info area divider line ── */}
       <line x1={0} y1={PH} x2={NW} y2={PH}
-        stroke={col} strokeWidth={1.5} opacity={0.3}/>
+        stroke="#1e293b" strokeWidth={2} opacity={0.15}/>
 
-      {/* ── Info area (bottom) — white background ── */}
-      {/* First name — light */}
-      {surname&&
-        <text x={NW/2} y={PH+14} textAnchor="middle"
-          fill={fnFill} fontSize={9} fontWeight="500" fontFamily={FONT}>{fn}</text>}
-      {/* Surname — bold */}
-      <text x={NW/2} y={PH+(surname?27:16)} textAnchor="middle"
-        fill={nameFill} fontSize={11} fontWeight="800" fontFamily={FONT}>
-        {sn||fn}{isDead&&<tspan fill="#94a3b8" fontSize={9}> ✝</tspan>}
-      </text>
-      {/* Years */}
-      <text x={NW/2} y={PH+(surname?40:30)} textAnchor="middle"
-        fill={yearFill} fontSize={9} fontFamily={FONT}>
-        {person.born||"?"}{person.died?" – "+person.died:""}
-      </text>
+      {/* ── Info area (bottom) — gender colour background ── */}
+      {surname
+        ? <>
+            {/* First name — same size & weight as surname */}
+            <text x={NW/2} y={PH+14} textAnchor="middle"
+              fill={nameFill} fontSize={11} fontWeight="700" fontFamily={FONT}>{fn}</text>
+            <text x={NW/2} y={PH+28} textAnchor="middle"
+              fill={nameFill} fontSize={11} fontWeight="700" fontFamily={FONT}>
+              {sn}{isDead&&<tspan fill="#64748b" fontSize={9}> ✝</tspan>}
+            </text>
+            <text x={NW/2} y={PH+42} textAnchor="middle"
+              fill={yearFill} fontSize={9} fontFamily={FONT}>
+              {person.born||"?"}{person.died?" – "+person.died:""}
+            </text>
+          </>
+        : <>
+            <text x={NW/2} y={PH+18} textAnchor="middle"
+              fill={nameFill} fontSize={11} fontWeight="700" fontFamily={FONT}>
+              {fn}{isDead&&<tspan fill="#64748b" fontSize={9}> ✝</tspan>}
+            </text>
+            <text x={NW/2} y={PH+34} textAnchor="middle"
+              fill={yearFill} fontSize={9} fontFamily={FONT}>
+              {person.born||"?"}{person.died?" – "+person.died:""}
+            </text>
+          </>
+      }
 
-      {/* ── Outsider dashed inner ring ── */}
+      {/* Outsider dashed ring */}
       {outsider&&!sel&&
         <rect x={2} y={2} width={NW-4} height={NH-4} rx={12}
-          fill="none" stroke={col} strokeWidth={1}
-          strokeDasharray="5 3" opacity={0.45}/>}
+          fill="none" stroke="#1e293b" strokeWidth={2}
+          strokeDasharray="5 3" opacity={0.5}/>}
 
       {/* ── Selected ring ── */}
       {sel&&<rect width={NW} height={NH} rx={14} fill="none"
