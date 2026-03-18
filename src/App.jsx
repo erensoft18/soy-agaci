@@ -2138,8 +2138,8 @@ function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport}) {
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-const AUTH_USER = "erensoft";
-const AUTH_PASS = "sakaeli";
+const AUTH_USER = "admin";
+const AUTH_PASS = "soyagaci";
 const AUTH_KEY  = "soyagaci_auth";
 
 function LoginScreen({onLogin}) {
