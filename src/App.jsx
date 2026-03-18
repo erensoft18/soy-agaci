@@ -362,8 +362,8 @@ function Node({person,p,sel,onClick,outsider}) {
   // Info area: deeper gender colour bg; outsider = darker
   const infoBg   = sel ? normalBg
     : outsider
-      ? (person.gender==="male" ? "#93c5fd" : "#f9a8d4")
-      : (person.gender==="male" ? "#bfdbfe" : "#fbcfe8");
+      ? (person.gender==="male" ? "#bfdbfe" : "#fbcfe8")
+      : (person.gender==="male" ? "#dbeafe" : "#fce7f3");
   const nameFill = "#1e293b";
   const yearFill = "#475569";
 
