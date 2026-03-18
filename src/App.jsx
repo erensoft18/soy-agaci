@@ -1202,117 +1202,126 @@ function buildPrintHTML(tree, tileImgs, title) {
 }
 
 // Split SVG into page tiles — supports both wide AND tall trees
-// Strategy:
-//   1. Group generation rows into vertical bands that fit within PAGE_H
-//   2. For each vertical band, find horizontal cut points between family groups
-//   3. Render each (vBand × hSlice) combination as one page tile
+// targetPages: if set, forces the tree to be split into exactly that many columns×rows
 async function buildTiledImgs(people, rels, pageWidthPx, targetPages) {
   const result = buildTreeSVGString(people, rels);
   if (!result) return [null];
   const {svgString, W, H} = result;
 
-  // A4 landscape usable area (px at 96dpi, no margin)
-  // Width  ≈ 297mm → ~1122px   Height ≈ 210mm → ~793px
-  // We reserve ~14px for the footer row → effective diagram height
-  let PAGE_W = pageWidthPx || 1080;
-  let PAGE_H = 720; // ~190mm usable after footer
-
-  // If targetPages specified, scale page size so tree fits in roughly that many pages.
-  // Strategy: assume grid layout, adjust PAGE_W and PAGE_H proportionally.
-  if (targetPages && targetPages > 0) {
-    // Estimate natural page count without constraint: ceil(W/PAGE_W) * ceil(H/PAGE_H)
-    // Solve for a scale factor k such that ceil(W/(PAGE_W*k)) * ceil(H/(PAGE_H*k)) ≈ targetPages
-    // For simplicity: set effective page area = (W*H) / targetPages, keep A4 aspect ratio
-    const aspect = PAGE_W / PAGE_H; // ~1.5 for A4 landscape
-    const totalArea = W * H;
-    const pageArea  = totalArea / targetPages;
-    const newH = Math.sqrt(pageArea / aspect);
-    const newW = newH * aspect;
-    // Only shrink pages (zoom out), never inflate — that would waste space
-    PAGE_W = Math.min(PAGE_W, Math.max(newW, NW * 3));
-    PAGE_H = Math.min(PAGE_H, Math.max(newH, NH * 3));
-  }
-
-  // If the whole tree fits on one page — done
-  if (W <= PAGE_W * 1.05 && H <= PAGE_H * 1.05) {
-    const dataUrl = await svgToDataUrl(svgString);
-    return [{dataUrl, w:W, h:H}];
-  }
+  const BASE_PAGE_W = pageWidthPx || 1080;
+  const BASE_PAGE_H = 720;
 
   const {pos} = buildLayout(people, rels);
 
-  // ── 1. Vertical bands: group ranks so each band height <= PAGE_H ──────────
-  // Collect unique top-Y of each rank row
-  const rowTops = [...new Set(Object.values(pos).map(p => Math.round(p.y - NH/2)))]
-    .sort((a,b) => a - b);
-
-  const vBands = []; // [{y0, y1}]
-  let bandStart = rowTops[0] - 30;
-  let bandEnd   = bandStart;
-
-  for (const ry of rowTops) {
-    const rowBottom = ry + NH + 30;
-    if (rowBottom - bandStart <= PAGE_H) {
-      bandEnd = rowBottom;
-    } else {
-      vBands.push({y0: bandStart, y1: bandEnd});
-      bandStart = ry - 30;
-      bandEnd   = ry + NH + 30;
-    }
-  }
-  vBands.push({y0: bandStart, y1: bandEnd}); // flush last band
-
-  // ── 2. Horizontal slices: find safe cut points between family groups ───────
-  const allXs = Object.values(pos).map(p => p.x).sort((a,b) => a - b);
+  const allXs     = Object.values(pos).map(p => p.x).sort((a,b) => a - b);
   const treeLeft  = Math.min(...allXs) - NW/2 - 40;
   const treeRight = Math.max(...allXs) + NW/2 + 40;
+  const rowTops   = [...new Set(Object.values(pos).map(p => Math.round(p.y - NH/2)))].sort((a,b) => a-b);
+  const treeTop    = rowTops[0] - 30;
+  const treeBottom = rowTops[rowTops.length-1] + NH + 30;
 
-  // Natural gaps between nodes (safe to cut here)
-  const hCuts = [treeLeft];
-  for (let i = 1; i < allXs.length; i++) {
-    if (allXs[i] - allXs[i-1] > NW + 30) {
-      hCuts.push((allXs[i-1] + allXs[i]) / 2);
+  // ── Helper: build vBands given a max band height ───────────────────────────
+  function makeVBands(maxH) {
+    const bands = [];
+    let bs = treeTop, be = treeTop;
+    for (const ry of rowTops) {
+      const rb = ry + NH + 30;
+      if (rb - bs <= maxH) { be = rb; }
+      else { bands.push({y0:bs, y1:be}); bs = ry - 30; be = rb; }
     }
-  }
-  hCuts.push(treeRight);
-
-  // Build horizontal slices respecting PAGE_W
-  const hSlices = []; // [{x0, x1}]
-  let sliceStart = hCuts[0];
-  let sliceEnd   = hCuts[0];
-  for (let ci = 1; ci < hCuts.length; ci++) {
-    const c = hCuts[ci];
-    if (c - sliceStart <= PAGE_W) {
-      sliceEnd = c;
-    } else {
-      hSlices.push({x0: sliceStart, x1: sliceEnd});
-      sliceStart = sliceEnd;
-      sliceEnd   = c;
-    }
-  }
-  hSlices.push({x0: sliceStart, x1: sliceEnd});
-
-  // Fallback: no natural cuts found → equal splits
-  if (hSlices.length === 0 || (hSlices.length === 1 && hSlices[0].x1 - hSlices[0].x0 > PAGE_W * 1.1)) {
-    hSlices.length = 0;
-    const n = Math.ceil((treeRight - treeLeft) / PAGE_W);
-    for (let i = 0; i < n; i++) {
-      hSlices.push({x0: treeLeft + i * PAGE_W, x1: Math.min(treeLeft + (i+1) * PAGE_W, treeRight)});
-    }
+    bands.push({y0:bs, y1:be});
+    return bands;
   }
 
-  // ── 3. Render each tile ────────────────────────────────────────────────────
+  // ── Helper: build hSlices given a max slice width ──────────────────────────
+  function makeHSlices(maxW) {
+    // Find natural gap cut-points
+    const hCuts = [treeLeft];
+    for (let i = 1; i < allXs.length; i++) {
+      if (allXs[i] - allXs[i-1] > NW + 30) hCuts.push((allXs[i-1]+allXs[i])/2);
+    }
+    hCuts.push(treeRight);
+
+    // Greedy grouping respecting maxW
+    const slices = [];
+    let ss = hCuts[0], se = hCuts[0];
+    for (let ci = 1; ci < hCuts.length; ci++) {
+      const c = hCuts[ci];
+      if (c - ss <= maxW) { se = c; }
+      else { slices.push({x0:ss, x1:se}); ss = se; se = c; }
+    }
+    slices.push({x0:ss, x1:se});
+    return slices;
+  }
+
+  // ── Determine vBands and hSlices ───────────────────────────────────────────
+  let vBands, hSlices;
+
+  if (targetPages && targetPages > 1) {
+    // Work out the best nCols × nRows grid that:
+    //  a) gives product >= targetPages
+    //  b) keeps A4 aspect ratio (cols proportional to tree width, rows to height)
+    const treeW = treeRight - treeLeft;
+    const treeHH = treeBottom - treeTop;
+    const aspect = BASE_PAGE_W / BASE_PAGE_H; // ~1.5
+    // nCols / nRows should roughly equal (treeW / treeHH) / aspect
+    // and nCols * nRows = targetPages
+    const ratio = (treeW / treeHH) / aspect; // how many col-units per row-unit
+    // nRows = sqrt(targetPages / ratio), nCols = targetPages / nRows
+    let nRows = Math.max(1, Math.round(Math.sqrt(targetPages / Math.max(ratio, 0.1))));
+    let nCols = Math.ceil(targetPages / nRows);
+    // adjust until product >= targetPages
+    while (nCols * nRows < targetPages) nCols++;
+
+    // Force-split into exactly nCols horizontal slices
+    const sliceW = treeW / nCols;
+    hSlices = [];
+    for (let i = 0; i < nCols; i++) {
+      hSlices.push({x0: treeLeft + i*sliceW, x1: treeLeft + (i+1)*sliceW});
+    }
+
+    // Force-split into exactly nRows vertical bands — respect row boundaries
+    // Distribute rowTops evenly among nRows buckets
+    const rowsPerBand = Math.ceil(rowTops.length / nRows);
+    vBands = [];
+    for (let b = 0; b < nRows; b++) {
+      const first = rowTops[b * rowsPerBand];
+      const lastIdx = Math.min((b+1)*rowsPerBand - 1, rowTops.length-1);
+      const last  = rowTops[lastIdx];
+      if (first === undefined) continue;
+      vBands.push({y0: first - 30, y1: last + NH + 30});
+    }
+
+  } else if (targetPages === 1) {
+    // Single page: whole tree as one tile
+    vBands  = [{y0: treeTop, y1: treeBottom}];
+    hSlices = [{x0: treeLeft, x1: treeRight}];
+
+  } else {
+    // Auto: natural splitting within A4 bounds
+    vBands  = makeVBands(BASE_PAGE_H);
+    hSlices = makeHSlices(BASE_PAGE_W);
+    // Fallback if hSlices is just 1 giant slice wider than page
+    if (hSlices.length === 1 && hSlices[0].x1 - hSlices[0].x0 > BASE_PAGE_W * 1.1) {
+      const n = Math.ceil((treeRight - treeLeft) / BASE_PAGE_W);
+      hSlices = [];
+      for (let i = 0; i < n; i++) {
+        hSlices.push({x0: treeLeft + i*BASE_PAGE_W, x1: Math.min(treeLeft + (i+1)*BASE_PAGE_W, treeRight)});
+      }
+    }
+  }
+
+  // ── Render each tile ───────────────────────────────────────────────────────
   const results = [];
   for (const vb of vBands) {
     const bH = vb.y1 - vb.y0;
     for (const hs of hSlices) {
       const bW = hs.x1 - hs.x0;
-      if (bW < NW || bH < NH/2) continue; // skip slivers
+      if (bW < 10 || bH < 10) continue;
 
-      // Check if any node falls in this tile
       const hasContent = Object.values(pos).some(p =>
-        p.x >= hs.x0 && p.x <= hs.x1 &&
-        (p.y - NH/2) >= vb.y0 && (p.y + NH/2) <= vb.y1 + NH
+        p.x + NW/2 >= hs.x0 && p.x - NW/2 <= hs.x1 &&
+        p.y + NH/2 >= vb.y0 && p.y - NH/2 <= vb.y1
       );
       if (!hasContent) continue;
 
@@ -1322,7 +1331,7 @@ async function buildTiledImgs(people, rels, pageWidthPx, targetPages) {
         .replace(/height="[^"]*"/,  `height="${bH}"`);
 
       const dataUrl = await svgToDataUrl(tileSvg);
-      results.push({dataUrl, w: bW, h: bH});
+      results.push({dataUrl, w:bW, h:bH});
     }
   }
   return results.length ? results : [null];
@@ -1605,29 +1614,54 @@ function PrintModal({tree,onClose}) {
   // Estimate page count whenever scope or pageTarget changes
   useEffect(()=>{
     const {subPeople, subRels} = buildSubset();
+    if(!subPeople.length){setPageEst(null);return;}
     const r = buildTreeSVGString(subPeople, subRels);
     if(!r){setPageEst(null);return;}
-    const {W,H} = r;
-    let PAGE_W=1080, PAGE_H=720;
     const tgt = pageTarget==="auto" ? null : parseInt(pageTarget);
-    if(tgt && tgt>0){
-      const aspect=PAGE_W/PAGE_H, totalArea=W*H, pageArea=totalArea/tgt;
-      const newH=Math.sqrt(pageArea/aspect), newW=newH*aspect;
-      PAGE_W=Math.min(PAGE_W,Math.max(newW,NW*3));
-      PAGE_H=Math.min(PAGE_H,Math.max(newH,NH*3));
+    if(tgt===1){setPageEst(1);return;}
+    if(tgt>1){
+      // Mirror the exact grid logic from buildTiledImgs
+      const {pos} = buildLayout(subPeople, subRels);
+      const allXs  = Object.values(pos).map(p=>p.x).sort((a,b)=>a-b);
+      const rowTops= [...new Set(Object.values(pos).map(p=>Math.round(p.y-NH/2)))].sort((a,b)=>a-b);
+      const treeW  = Math.max(...allXs)+NW/2+40 - (Math.min(...allXs)-NW/2-40);
+      const treeHH = rowTops[rowTops.length-1]+NH+30 - (rowTops[0]-30);
+      const aspect = 1080/720;
+      const ratio  = (treeW/treeHH)/aspect;
+      let nRows = Math.max(1,Math.round(Math.sqrt(tgt/Math.max(ratio,0.1))));
+      let nCols = Math.ceil(tgt/nRows);
+      while(nCols*nRows<tgt) nCols++;
+      // count non-empty tiles
+      const {pos:pos2} = buildLayout(subPeople, subRels);
+      const left=Math.min(...allXs)-NW/2-40, right=Math.max(...allXs)+NW/2+40;
+      const sw=(right-left)/nCols;
+      const rowsPerBand=Math.ceil(rowTops.length/nRows);
+      let count=0;
+      for(let b=0;b<nRows;b++){
+        const firstRy=rowTops[b*rowsPerBand]; if(!firstRy) continue;
+        const lastRy=rowTops[Math.min((b+1)*rowsPerBand-1,rowTops.length-1)];
+        const y0=firstRy-30, y1=lastRy+NH+30;
+        for(let c=0;c<nCols;c++){
+          const x0=left+c*sw, x1=left+(c+1)*sw;
+          const has=Object.values(pos2).some(p=>p.x+NW/2>=x0&&p.x-NW/2<=x1&&p.y+NH/2>=y0&&p.y-NH/2<=y1);
+          if(has) count++;
+        }
+      }
+      setPageEst(count);
+      return;
     }
+    // Auto mode
     const {pos} = buildLayout(subPeople, subRels);
-    const rowTops=[...new Set(Object.values(pos).map(p=>Math.round(p.y-NH/2)))].sort((a,b)=>a-b);
-    let vCount=0, bandStart=rowTops[0]-30, bandEnd=bandStart;
-    for(const ry of rowTops){ const rb=ry+NH+30; if(rb-bandStart<=PAGE_H){bandEnd=rb;}else{vCount++;bandStart=ry-30;bandEnd=ry+NH+30;} }
-    vCount++;
     const allXs=Object.values(pos).map(p=>p.x).sort((a,b)=>a-b);
-    const treeLeft=Math.min(...allXs)-NW/2-40, treeRight=Math.max(...allXs)+NW/2+40;
-    const hCuts=[treeLeft];
+    const rowTops=[...new Set(Object.values(pos).map(p=>Math.round(p.y-NH/2)))].sort((a,b)=>a-b);
+    let vCount=0, bs=rowTops[0]-30, be=bs;
+    for(const ry of rowTops){const rb=ry+NH+30;if(rb-bs<=720){be=rb;}else{vCount++;bs=ry-30;be=rb;}}vCount++;
+    const tL=Math.min(...allXs)-NW/2-40,tR=Math.max(...allXs)+NW/2+40;
+    const hCuts=[tL];
     for(let i=1;i<allXs.length;i++){if(allXs[i]-allXs[i-1]>NW+30)hCuts.push((allXs[i-1]+allXs[i])/2);}
-    hCuts.push(treeRight);
-    let hCount=0, ss=hCuts[0], se=hCuts[0];
-    for(let ci=1;ci<hCuts.length;ci++){const c=hCuts[ci];if(c-ss<=PAGE_W){se=c;}else{hCount++;ss=se;se=c;}}
+    hCuts.push(tR);
+    let hCount=0,ss=hCuts[0],se=hCuts[0];
+    for(let ci=1;ci<hCuts.length;ci++){const c=hCuts[ci];if(c-ss<=1080){se=c;}else{hCount++;ss=se;se=c;}}
     hCount++;
     setPageEst(vCount*hCount);
   },[scope, pageTarget]);
