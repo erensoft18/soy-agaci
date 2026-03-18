@@ -980,33 +980,112 @@ function collectSubtree(rootIds, allPeople, allRels) {
   return { subPeople, subRels };
 }
 
-function buildTreeSVGString(people,rels) {
-  const {pos}=buildLayout(people,rels);
-  const xs=Object.values(pos).map(p=>p.x),ys=Object.values(pos).map(p=>p.y);
-  if(!xs.length) return null;
-  const pad=30,minX=Math.min(...xs)-NW/2-pad,minY=Math.min(...ys)-NH/2-pad;
-  const maxX=Math.max(...xs)+NW/2+pad,maxY=Math.max(...ys)+NH/2+pad;
-  const W=maxX-minX,H=maxY-minY;
-  const drawn=new Set(); const svgLines=[];
-  rels.forEach(r=>{
-    const a=pos[r.p1],b=pos[r.p2]; if(!a||!b) return;
-    const def=RMAP[r.type]||{},col=def.color||"#94a3b8";
-    if(HORIZONTAL.has(r.type)){ const key=[r.p1,r.p2].sort().join("|")+r.type; if(drawn.has(key)) return; drawn.add(key); const dash=r.type==="spouse"?"5,3":""; svgLines.push('<line x1="'+a.x+'" y1="'+a.y+'" x2="'+b.x+'" y2="'+b.y+'" stroke="'+col+'" stroke-width="2" stroke-dasharray="'+dash+'" opacity="0.8"/>'); if(r.type==="spouse") svgLines.push('<text x="'+((a.x+b.x)/2)+'" y="'+((a.y+b.y)/2-5)+'" text-anchor="middle" font-size="12" fill="'+col+'">♥</text>'); }
-    else if(VERTICAL.has(r.type)){ const cy=(a.y+b.y)/2; const dash=r.type==="grandparent"?"7,4":r.type==="uncle"?"3,3":""; svgLines.push('<path d="M'+a.x+','+(a.y+NH/2)+' C'+a.x+','+(cy+18)+' '+b.x+','+(cy-18)+' '+b.x+','+(b.y-NH/2)+'" fill="none" stroke="'+col+'" stroke-width="2" stroke-dasharray="'+dash+'" opacity="0.85"/>'); }
+function buildTreeSVGString(people, rels) {
+  const {pos, couplePoints} = buildLayout(people, rels);
+  const xs = Object.values(pos).map(p=>p.x);
+  const ys = Object.values(pos).map(p=>p.y);
+  if (!xs.length) return null;
+
+  const pad = 40;
+  const minX = Math.min(...xs)-NW/2-pad, minY = Math.min(...ys)-NH/2-pad;
+  const maxX = Math.max(...xs)+NW/2+pad, maxY = Math.max(...ys)+NH/2+pad;
+  const W = maxX-minX, H = maxY-minY;
+
+  const L = "#1e293b", LW = 3; // line color & width — matches Canvas
+  const lines = [];
+  const drawn = new Set();
+
+  // ── Edges ──
+  // Spouse lines
+  rels.filter(r=>r.type==="spouse").forEach(r=>{
+    const key=[r.p1,r.p2].sort().join("|");
+    if(drawn.has(key)) return; drawn.add(key);
+    const a=pos[r.p1], b=pos[r.p2]; if(!a||!b) return;
+    const mx=(a.x+b.x)/2, my=a.y;
+    lines.push('<line x1="'+a.x+'" y1="'+my+'" x2="'+b.x+'" y2="'+my+'" stroke="'+L+'" stroke-width="'+LW+'" stroke-dasharray="8 4" opacity="0.85"/>');
+    lines.push('<circle cx="'+mx+'" cy="'+my+'" r="10" fill="#ffffff" stroke="'+L+'" stroke-width="'+(LW*0.7)+'"/>');
+    lines.push('<text x="'+mx+'" y="'+(my+4)+'" text-anchor="middle" font-size="11" fill="'+L+'">♥</text>');
   });
-  people.forEach(p=>{ const pt=pos[p.id]; if(!pt) return; const col=p.gender==="male"?"#3b82f6":"#ec4899"; const cl=p.gender==="male"?"#dbeafe":"#fce7f3"; const x=pt.x-NW/2,y=pt.y-NH/2; const isDead=!!p.died; const cid="cpr-"+p.id;
-    svgLines.push('<defs><clipPath id="'+cid+'"><circle cx="'+pt.x+'" cy="'+(y+38)+'" r="25"/></clipPath></defs>');
-    svgLines.push('<rect x="'+x+'" y="'+y+'" width="'+NW+'" height="'+NH+'" rx="14" fill="'+(isDead?"#f1f5f9":"#ffffff")+'" stroke="'+col+'" stroke-width="1.5" opacity="'+(isDead?0.65:1)+'"/>');
-    svgLines.push('<rect x="'+x+'" y="'+y+'" width="'+NW+'" height="5" rx="2" fill="'+col+'"/>');
-    if(p.photo){ svgLines.push('<image href="'+p.photo+'" x="'+(pt.x-25)+'" y="'+(y+13)+'" width="50" height="50" clip-path="url(#'+cid+')" preserveAspectRatio="xMidYMid slice"/>'); }
-    else { svgLines.push('<circle cx="'+pt.x+'" cy="'+(y+38)+'" r="25" fill="'+cl+'" stroke="'+col+'" stroke-width="1.5"/>'); svgLines.push('<text x="'+pt.x+'" y="'+(y+46)+'" text-anchor="middle" fill="'+col+'" font-size="20" font-family="serif">'+(p.gender==="male"?"♂":"♀")+'</text>'); }
-    svgLines.push('<circle cx="'+pt.x+'" cy="'+(y+38)+'" r="25" fill="none" stroke="'+col+'" stroke-width="1.5" opacity="0.5"/>');
-    if(isDead) svgLines.push('<text x="'+(x+NW-12)+'" y="'+(y+18)+'" fill="#94a3b8" font-size="13">✝</text>');
-    const nm=p.name.length>18?p.name.slice(0,17)+"…":p.name;
-    svgLines.push('<text x="'+pt.x+'" y="'+(y+76)+'" text-anchor="middle" fill="#1e293b" font-size="11" font-weight="700" font-family="sans-serif">'+nm+'</text>');
-    svgLines.push('<text x="'+pt.x+'" y="'+(y+92)+'" text-anchor="middle" fill="#64748b" font-size="10" font-family="sans-serif">'+(p.born||"?")+(p.died?" – "+p.died:"")+'</text>');
+  // Parent lines
+  const drawnP = new Set();
+  rels.filter(r=>VERTICAL.has(r.type)).forEach(r=>{
+    if(drawnP.has(r.id)) return; drawnP.add(r.id);
+    const child=pos[r.p2]; if(!child) return;
+    const cp=Object.values(couplePoints).find(c=>(c.p1===r.p1||c.p2===r.p1)&&c.children.includes(r.p2));
+    const fromX=cp?cp.x:(pos[r.p1]?.x??0);
+    const fromY=cp?cp.y:(pos[r.p1]?.y??0);
+    const fy=fromY+NH/2+6, ty=child.y-NH/2-4, cy2=(fy+ty)/2;
+    lines.push('<path d="M'+fromX+','+fy+' C'+fromX+','+cy2+' '+child.x+','+cy2+' '+child.x+','+ty+'" fill="none" stroke="'+L+'" stroke-width="'+LW+'" opacity="0.85"/>');
   });
-  return {svgString:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="'+minX+' '+minY+' '+W+' '+H+'" width="'+W+'" height="'+H+'">'+svgLines.join("")+"</svg>",W,H};
+
+  // ── Nodes — same design as SVG Node component ──
+  const defs = [];
+  const nodes = [];
+  const hasParentSet = new Set(rels.filter(r=>r.type==="parent").map(r=>r.p2));
+  const hasSpouseSet = new Set([...rels.filter(r=>r.type==="spouse").map(r=>r.p1),...rels.filter(r=>r.type==="spouse").map(r=>r.p2)]);
+
+  people.forEach(p=>{
+    const pt=pos[p.id]; if(!pt) return;
+    const x=pt.x-NW/2, y=pt.y-NH/2;
+    const col=p.gender==="male"?"#3b82f6":"#ec4899";
+    const normalBg=p.gender==="male"?"#dbeafe":"#fce7f3";
+    const outsider=hasSpouseSet.has(p.id)&&!hasParentSet.has(p.id);
+    const infoBg=outsider?(p.gender==="male"?"#bfdbfe":"#fbcfe8"):(p.gender==="male"?"#dbeafe":"#fce7f3");
+    const isDead=!!p.died;
+    const INFO_H=52, PH=NH-INFO_H;
+    const cid="pcp-"+p.id;
+
+    // Photo clip path (flat bottom)
+    defs.push('<clipPath id="'+cid+'"><path d="M14,0 L'+(NW-14)+',0 Q'+NW+',0 '+NW+',14 L'+NW+','+PH+' L0,'+PH+' L0,14 Q0,0 14,0 Z" transform="translate('+x+','+y+')"/></clipPath>');
+
+    // Card bg
+    nodes.push('<rect x="'+x+'" y="'+y+'" width="'+NW+'" height="'+NH+'" rx="14" fill="#ffffff" stroke="#1e293b" stroke-width="2" opacity="'+(isDead?0.72:1)+'"/>');
+
+    // Photo area
+    if(p.photo){
+      nodes.push('<image href="'+p.photo+'" x="'+x+'" y="'+y+'" width="'+NW+'" height="'+PH+'" clip-path="url(#'+cid+')" preserveAspectRatio="xMidYMid slice"/>');
+    } else {
+      nodes.push('<rect x="'+x+'" y="'+y+'" width="'+NW+'" height="'+PH+'" fill="'+normalBg+'" clip-path="url(#'+cid+')"/>');
+      nodes.push('<text x="'+(x+NW/2)+'" y="'+(y+PH*0.52)+'" text-anchor="middle" dominant-baseline="middle" fill="'+col+'" font-size="52" font-family="serif" opacity="0.4">'+(p.gender==="male"?"♂":"♀")+'</text>');
+    }
+
+    // Vignette border on photo
+    nodes.push('<rect x="'+x+'" y="'+y+'" width="'+NW+'" height="'+PH+'" fill="none" stroke="'+col+'" stroke-width="2" stroke-opacity="0.2" clip-path="url(#'+cid+')"/>');
+
+    // Info area bg (flat top, rounded bottom via path)
+    nodes.push('<path d="M'+x+','+(y+PH)+' L'+(x+NW)+','+(y+PH)+' L'+(x+NW)+','+(y+NH-14)+' Q'+(x+NW)+','+(y+NH)+' '+(x+NW-14)+','+(y+NH)+' L'+(x+14)+','+(y+NH)+' Q'+x+','+(y+NH)+' '+x+','+(y+NH-14)+' Z" fill="'+infoBg+'"/>');
+
+    // Divider
+    nodes.push('<line x1="'+x+'" y1="'+(y+PH)+'" x2="'+(x+NW)+'" y2="'+(y+PH)+'" stroke="#1e293b" stroke-width="2" opacity="0.15"/>');
+
+    // Death cross
+    if(isDead) nodes.push('<text x="'+(x+NW-8)+'" y="'+(y+16)+'" text-anchor="middle" fill="#94a3b8" font-size="12" font-family="serif">✝</text>');
+
+    // Name split
+    const parts=p.name.trim().split(" ");
+    const surname=parts.length>1?parts[parts.length-1]:"";
+    const firstName=parts.length>1?parts.slice(0,-1).join(" "):parts[0];
+    const maxCh=14;
+    const fn=firstName.length>maxCh?firstName.slice(0,maxCh-1)+"…":firstName;
+    const sn=surname.length>maxCh?surname.slice(0,maxCh-1)+"…":surname;
+    const cx=x+NW/2;
+    if(surname){
+      nodes.push('<text x="'+cx+'" y="'+(y+PH+14)+'" text-anchor="middle" fill="#1e293b" font-size="11" font-weight="700" font-family="sans-serif">'+fn+'</text>');
+      nodes.push('<text x="'+cx+'" y="'+(y+PH+28)+'" text-anchor="middle" fill="#1e293b" font-size="11" font-weight="700" font-family="sans-serif">'+sn+'</text>');
+      nodes.push('<text x="'+cx+'" y="'+(y+PH+42)+'" text-anchor="middle" fill="#475569" font-size="9" font-family="sans-serif">'+(p.born||"?")+(p.died?" – "+p.died:"")+'</text>');
+    } else {
+      nodes.push('<text x="'+cx+'" y="'+(y+PH+18)+'" text-anchor="middle" fill="#1e293b" font-size="11" font-weight="700" font-family="sans-serif">'+fn+'</text>');
+      nodes.push('<text x="'+cx+'" y="'+(y+PH+34)+'" text-anchor="middle" fill="#475569" font-size="9" font-family="sans-serif">'+(p.born||"?")+(p.died?" – "+p.died:"")+'</text>');
+    }
+  });
+
+  const svgString = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="'+minX+' '+minY+' '+W+' '+H+'" width="'+W+'" height="'+H+'" style="background:#f0f4ff">'
+    + '<defs>'+defs.join("")+'</defs>'
+    + lines.join("")
+    + nodes.join("")
+    + '</svg>';
+
+  return {svgString, W, H};
 }
 
 async function svgToDataUrl(svgString) {
@@ -1097,7 +1176,7 @@ async function buildTiledImgs(people, rels, pageWidthPx) {
 function PrintModal({tree,onClose}) {
   const allPeople = tree.people||[], allRels = tree.rels||[];
 
-  // Spouse pairs only
+  // Spouse pairs — sorted top-to-bottom by generation rank
   const spousePairs = [];
   const seenPairs   = new Set();
   allRels.filter(r=>r.type==="spouse").forEach(r=>{
@@ -1106,6 +1185,36 @@ function PrintModal({tree,onClose}) {
     const p1=allPeople.find(p=>p.id===r.p1), p2=allPeople.find(p=>p.id===r.p2);
     if(p1&&p2) spousePairs.push({key, p1, p2});
   });
+  // Compute rank for sorting: use parent-child depth
+  (()=>{
+    const parentOf = {};
+    allPeople.forEach(p=>{ parentOf[p.id]=0; });
+    allRels.filter(r=>r.type==="parent").forEach(({p1,p2})=>{
+      parentOf[p2] = (parentOf[p2]||0)+1; // will be replaced below
+    });
+    // BFS depth
+    const depth = {};
+    allPeople.forEach(p=>{ depth[p.id]=0; });
+    const upMap = {};
+    allRels.filter(r=>r.type==="parent").forEach(({p1,p2})=>{
+      if(!upMap[p2]) upMap[p2]=[];
+      upMap[p2].push(p1);
+    });
+    let changed=true;
+    while(changed){ changed=false;
+      allPeople.forEach(p=>{
+        const parents=(upMap[p.id]||[]);
+        if(!parents.length) return;
+        const nd=Math.max(...parents.map(pid=>depth[pid]||0))+1;
+        if((depth[p.id]||0)<nd){ depth[p.id]=nd; changed=true; }
+      });
+    }
+    spousePairs.sort((a,b)=>{
+      const da=Math.min(depth[a.p1.id]||0, depth[a.p2.id]||0);
+      const db=Math.min(depth[b.p1.id]||0, depth[b.p2.id]||0);
+      return da-db;
+    });
+  })();
 
   const [scope,      setScope]      = useState("all");
   const [pairSearch, setPairSearch] = useState("");
