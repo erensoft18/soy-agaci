@@ -13,7 +13,7 @@ const FONT = "'Poppins',sans-serif";
 
 const REL_DEFS = [
   { value:"spouse",      label:"Eşler",                         icon:"💍", color:"#f59e0b", bi:true  },
-  { value:"parent",      label:"Ebeveyn → Çocuk",               icon:"👨‍👧", color:"#6366f1", bi:false },
+  { value:"parent",      label:"Ebeveyn → Çocuk",               icon:"👨‍👧", color:"#6366f1", bi:false, autoSpouse:true },
   { value:"sibling",     label:"Kardeş",                        icon:"🤝", color:"#10b981", bi:true  },
   { value:"grandparent", label:"Büyükanne/baba → Torun",        icon:"👴", color:"#f97316", bi:false },
   { value:"uncle",       label:"Amca/Dayı/Hala/Teyze → Yeğen", icon:"🧑", color:"#0ea5e9", bi:false },
@@ -155,6 +155,15 @@ function buildLayout(people, rels) {
       if(!spouseOf[p1].includes(p2)) spouseOf[p1].push(p2);
       if(!spouseOf[p2].includes(p1)) spouseOf[p2].push(p1);
     }
+  });
+  // AutoSpouse: if parent rel has autoSpouse flag, also register the parent's spouse
+  // as co-parent — so user only needs to define the rel once per parent
+  rels.forEach(({type,p1,p2})=>{
+    if(type!=="parent") return;
+    spouseOf[p1].forEach(sid=>{
+      if(!childrenOf[sid].includes(p2)) childrenOf[sid].push(p2);
+      if(!parentsOf[p2].includes(sid))  parentsOf[p2].push(sid);
+    });
   });
 
   // ── 2. Rank (generation) assignment ───────────────────────────────────────
@@ -492,25 +501,125 @@ function Canvas({people,rels,selId,onSelect}) {
 }
 
 // ─── Drag-sortable list ────────────────────────────────────────────────────────
-function DragList({items,onReorder,renderItem}) {
-  const dragIdx=useRef(null);
-  const [dragOver,setDragOver]=useState(null);
+// ─── DragGrid — mouse + touch drag-to-reorder for grid layouts ───────────────
+function DragGrid({items, onReorder, renderItem, columns}) {
+  const [dragging, setDragging]   = useState(null);   // index being dragged
+  const [overIdx,  setOverIdx]    = useState(null);   // index being hovered
+  const [ghost,    setGhost]      = useState(null);   // {x,y,w,h} for floating ghost
+  const containerRef = useRef(null);
+  const itemRefs     = useRef({});
+  const pointerStart = useRef(null); // {x,y,idx}
 
-  const onDragStart=(e,i)=>{ dragIdx.current=i; e.dataTransfer.effectAllowed="move"; };
-  const onDragOver=(e,i)=>{ e.preventDefault(); setDragOver(i); };
-  const onDrop=(e,i)=>{ e.preventDefault(); const from=dragIdx.current; if(from===null||from===i) return; const next=[...items]; const [moved]=next.splice(from,1); next.splice(i,0,moved); onReorder(next); dragIdx.current=null; setDragOver(null); };
-  const onDragEnd=()=>{ dragIdx.current=null; setDragOver(null); };
+  // Helper: find grid index from pointer position
+  const idxFromPoint = (cx, cy) => {
+    let closest = null, closestDist = Infinity;
+    Object.entries(itemRefs.current).forEach(([i, el]) => {
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const mx = r.left + r.width/2, my = r.top + r.height/2;
+      const d = Math.hypot(cx - mx, cy - my);
+      if (d < closestDist) { closestDist = d; closest = +i; }
+    });
+    return closest;
+  };
+
+  const startDrag = (e, idx) => {
+    e.preventDefault();
+    const isTouch = e.touches != null;
+    const cx = isTouch ? e.touches[0].clientX : e.clientX;
+    const cy = isTouch ? e.touches[0].clientY : e.clientY;
+    const el = itemRefs.current[idx];
+    const r  = el ? el.getBoundingClientRect() : {left:cx,top:cy,width:160,height:80};
+    pointerStart.current = { x:cx, y:cy, idx };
+    setDragging(idx);
+    setOverIdx(idx);
+    setGhost({ x:r.left, y:r.top, w:r.width, h:r.height });
+  };
+
+  const moveDrag = useCallback((e) => {
+    if (dragging === null) return;
+    const isTouch = e.touches != null;
+    const cx = isTouch ? e.touches[0].clientX : e.clientX;
+    const cy = isTouch ? e.touches[0].clientY : e.clientY;
+    setGhost(g => g ? { ...g, x: g.x + (cx - pointerStart.current.x), y: g.y + (cy - pointerStart.current.y) } : g);
+    pointerStart.current.x = cx;
+    pointerStart.current.y = cy;
+    const over = idxFromPoint(cx, cy);
+    if (over !== null) setOverIdx(over);
+  }, [dragging]);
+
+  const endDrag = useCallback(() => {
+    if (dragging === null) return;
+    if (overIdx !== null && overIdx !== dragging) {
+      const next = [...items];
+      const [moved] = next.splice(dragging, 1);
+      next.splice(overIdx, 0, moved);
+      onReorder(next);
+    }
+    setDragging(null);
+    setOverIdx(null);
+    setGhost(null);
+    pointerStart.current = null;
+  }, [dragging, overIdx, items, onReorder]);
+
+  useEffect(() => {
+    if (dragging === null) return;
+    window.addEventListener("mousemove", moveDrag);
+    window.addEventListener("mouseup",   endDrag);
+    window.addEventListener("touchmove", moveDrag, { passive:false });
+    window.addEventListener("touchend",  endDrag);
+    return () => {
+      window.removeEventListener("mousemove", moveDrag);
+      window.removeEventListener("mouseup",   endDrag);
+      window.removeEventListener("touchmove", moveDrag);
+      window.removeEventListener("touchend",  endDrag);
+    };
+  }, [dragging, moveDrag, endDrag]);
+
+  const gridStyle = {
+    display: "grid",
+    gridTemplateColumns: columns || "repeat(auto-fill,minmax(155px,1fr))",
+    gap: 10,
+    position: "relative",
+  };
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-      {items.map((item,i)=>(
-        <div key={item.id} draggable
-          onDragStart={e=>onDragStart(e,i)} onDragOver={e=>onDragOver(e,i)}
-          onDrop={e=>onDrop(e,i)} onDragEnd={onDragEnd}
-          style={{opacity:dragOver===i?0.5:1,transition:"opacity 0.15s",outline:dragOver===i?"2px dashed #6366f1":"none",borderRadius:10}}>
-          {renderItem(item,i)}
+    <div ref={containerRef} style={gridStyle}>
+      {items.map((item, i) => (
+        <div
+          key={item.id}
+          ref={el => itemRefs.current[i] = el}
+          onMouseDown={e => { if(e.button===0) startDrag(e,i); }}
+          onTouchStart={e => startDrag(e, i)}
+          style={{
+            opacity:   dragging===i ? 0.3 : 1,
+            transform: overIdx===i && dragging!==null && dragging!==i ? "scale(1.03)" : "scale(1)",
+            outline:   overIdx===i && dragging!==null && dragging!==i ? "2.5px dashed #6366f1" : "none",
+            borderRadius: 14,
+            transition: "transform 0.12s, opacity 0.12s",
+            cursor: "grab",
+            userSelect: "none",
+          }}>
+          {renderItem(item, i)}
         </div>
       ))}
+      {/* Floating ghost card while dragging */}
+      {ghost && dragging !== null && (
+        <div style={{
+          position: "fixed",
+          left: ghost.x, top: ghost.y,
+          width: ghost.w, height: ghost.h,
+          pointerEvents: "none",
+          zIndex: 9999,
+          opacity: 0.85,
+          transform: "rotate(2deg) scale(1.05)",
+          boxShadow: "0 12px 32px rgba(99,102,241,0.3)",
+          borderRadius: 14,
+          overflow: "hidden",
+        }}>
+          {renderItem(items[dragging], dragging)}
+        </div>
+      )}
     </div>
   );
 }
@@ -704,6 +813,7 @@ function RelModal({rel,people,onSave,onClose}) {
             </select>
           </div>
           {relDef.bi&&<div style={{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:10,padding:"10px 13px",fontSize:13,color:"#4f46e5",fontFamily:FONT}}>ℹ️ Çift yönlü — tek kez tanımlamanız yeterlidir.</div>}
+          {form.type==="parent"&&<div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:10,padding:"10px 13px",fontSize:13,color:"#166534",fontFamily:FONT}}>💡 Sadece bir ebeveyn seçmeniz yeterli — eşi otomatik olarak ortak ebeveyn sayılır.</div>}
           <div><label style={lbl}>{relDef.bi?"KİŞİ 1 ":"ÜSTTEKI (Ebeveyn / Büyükanne / Amca vb.)"}</label>
             <SearchSelect
               value={form.p1}
@@ -905,7 +1015,18 @@ function TreeEditor({tree,onSave,onBack}) {
 
   const openAddRel=()=>setRelModal("new");
   const openEditRel=r=>setRelModal(r);
-  const handleSaveRel=data=>{ if(relModal==="new"){ const dup=rels.some(r=>r.type===data.type&&((r.p1===data.p1&&r.p2===data.p2)||(r.p1===data.p2&&r.p2===data.p1))); if(!dup) setRels(prev=>[...prev,{...data,id:"r"+Date.now()}]); } else { setRels(prev=>prev.map(r=>r.id===relModal.id?{...r,...data}:r)); } setRelModal(null); };
+  const handleSaveRel=data=>{ if(relModal==="new"){
+    // For parent rels: skip if the child already has this parent OR the parent's spouse as parent
+    if(data.type==="parent"){
+      const spousesOfP1=rels.filter(r=>r.type==="spouse"&&(r.p1===data.p1||r.p2===data.p1)).map(r=>r.p1===data.p1?r.p2:r.p1);
+      const alreadyCovered=rels.some(r=>r.type==="parent"&&r.p2===data.p2&&(r.p1===data.p1||spousesOfP1.includes(r.p1)));
+      if(!alreadyCovered) setRels(prev=>[...prev,{...data,id:"r"+Date.now()}]);
+      else alert("Bu çocuk için zaten bir ebeveyn ilişkisi tanımlı. Eşler otomatik ortak ebeveyn sayılır.");
+    } else {
+      const dup=rels.some(r=>r.type===data.type&&((r.p1===data.p1&&r.p2===data.p2)||(r.p1===data.p2&&r.p2===data.p1)));
+      if(!dup) setRels(prev=>[...prev,{...data,id:"r"+Date.now()}]);
+    }
+  } else { setRels(prev=>prev.map(r=>r.id===relModal.id?{...r,...data}:r)); } setRelModal(null); };
   const delRel=id=>{ setRels(prev=>prev.filter(r=>r.id!==id)); setConfirmRel(null); };
 
   const pname=id=>(people.find(p=>p.id===id)||{}).name||"?";
@@ -979,8 +1100,17 @@ function TreeEditor({tree,onSave,onBack}) {
             </div>
             {filteredPeople.length===0&&peopleSearch
               ?<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{peopleSearch}" için sonuç yok</div>
-              :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:10}}>
-                {filteredPeople.map(p=>{
+              :<DragGrid
+                items={filteredPeople}
+                columns="repeat(auto-fill,minmax(155px,1fr))"
+                onReorder={filtered=>{
+                  if(!peopleSearch.trim()){ setPeople(filtered); return; }
+                  const ids=filtered.map(p=>p.id);
+                  const next=[...people]; let fi=0;
+                  next.forEach((_,i)=>{ if(ids.includes(next[i].id)) next[i]=filtered[fi++]; });
+                  setPeople(next);
+                }}
+                renderItem={(p)=>{
                   const isOutsider=(()=>{ const hp=new Set(rels.filter(r=>r.type==="parent").map(r=>r.p2)); const hs=new Set([...rels.filter(r=>r.type==="spouse").map(r=>r.p1),...rels.filter(r=>r.type==="spouse").map(r=>r.p2)]); return hs.has(p.id)&&!hp.has(p.id); })();
                   const gCol=p.gender==="male"?C.male:C.female;
                   const gBg=p.gender==="male"?"#dbeafe":"#fce7f3";
@@ -1007,9 +1137,8 @@ function TreeEditor({tree,onSave,onBack}) {
                         <button onClick={()=>setConfirmPerson(p.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>🗑</button>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  ); }}
+              />
             }
           </div>
         )}
@@ -1029,8 +1158,17 @@ function TreeEditor({tree,onSave,onBack}) {
             </div>
             {filteredRels.length===0&&relsSearch
               ?<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{relsSearch}" için sonuç yok</div>
-              :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:10}}>
-                {filteredRels.map(r=>{ const d=RMAP[r.type]||{}; const p1=people.find(p=>p.id===r.p1); const p2=people.find(p=>p.id===r.p2); return(
+              :<DragGrid
+                items={filteredRels}
+                columns="repeat(auto-fill,minmax(240px,1fr))"
+                onReorder={filtered=>{
+                  if(!relsSearch.trim()){ setRels(filtered); return; }
+                  const ids=filtered.map(r=>r.id);
+                  const next=[...rels]; let fi=0;
+                  next.forEach((_,i)=>{ if(ids.includes(next[i].id)) next[i]=filtered[fi++]; });
+                  setRels(next);
+                }}
+                renderItem={(r)=>{ const d=RMAP[r.type]||{}; const p1=people.find(p=>p.id===r.p1); const p2=people.find(p=>p.id===r.p2); return(
                   <div key={r.id} style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:14,padding:"12px 12px 10px",display:"flex",flexDirection:"column",gap:8,boxShadow:"0 2px 6px rgba(99,102,241,0.06)"}}>
                     {/* Type badge */}
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -1064,8 +1202,8 @@ function TreeEditor({tree,onSave,onBack}) {
                       <button onClick={()=>setConfirmRel(r.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>🗑</button>
                     </div>
                   </div>
-                ); })}
-              </div>
+                ); }}
+              />
             }
           </div>
         )}
