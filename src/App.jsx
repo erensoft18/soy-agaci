@@ -1312,6 +1312,229 @@ async function buildTiledImgs(people, rels, pageWidthPx) {
   return results.length ? results : [null];
 }
 
+// ─── Export Modal ─────────────────────────────────────────────────────────────
+const EXPORT_FORMATS = [
+  { id:"png",  label:"PNG",  mime:"image/png",     ext:".png",  quality:null, desc:"Şeffaf arka plan destekler, kayıpsız" },
+  { id:"jpg",  label:"JPG",  mime:"image/jpeg",    ext:".jpg",  quality:0.95, desc:"Küçük dosya boyutu, fotoğraflar için" },
+  { id:"webp", label:"WebP", mime:"image/webp",    ext:".webp", quality:0.95, desc:"Modern format, küçük & kaliteli" },
+];
+
+const EXPORT_SIZES = [
+  { id:"1x",  label:"1×",  scale:1,   desc:"Orijinal boyut" },
+  { id:"2x",  label:"2×",  scale:2,   desc:"Orta çözünürlük" },
+  { id:"3x",  label:"3×",  scale:3,   desc:"Yüksek çözünürlük (önerilen)" },
+  { id:"4x",  label:"4×",  scale:4,   desc:"Baskı kalitesi" },
+  { id:"5x",  label:"5×",  scale:5,   desc:"Ultra yüksek çözünürlük" },
+];
+
+function ExportModal({tree, onClose}) {
+  const allPeople = tree.people||[], allRels = tree.rels||[];
+
+  // Spouse pairs (same logic as PrintModal)
+  const spousePairs = [];
+  const seenPairs   = new Set();
+  allRels.filter(r=>r.type==="spouse").forEach(r=>{
+    const key=[r.p1,r.p2].sort().join("|");
+    if(seenPairs.has(key)) return; seenPairs.add(key);
+    const p1=allPeople.find(p=>p.id===r.p1), p2=allPeople.find(p=>p.id===r.p2);
+    if(p1&&p2) spousePairs.push({key,p1,p2});
+  });
+  (()=>{
+    const depth={};
+    allPeople.forEach(p=>{depth[p.id]=0;});
+    const upMap={};
+    allRels.filter(r=>r.type==="parent").forEach(({p1,p2})=>{ if(!upMap[p2]) upMap[p2]=[]; upMap[p2].push(p1); });
+    let changed=true;
+    while(changed){ changed=false; allPeople.forEach(p=>{ const parents=(upMap[p.id]||[]); if(!parents.length) return; const nd=Math.max(...parents.map(pid=>depth[pid]||0))+1; if((depth[p.id]||0)<nd){depth[p.id]=nd;changed=true;} }); }
+    spousePairs.sort((a,b)=>(Math.min(depth[a.p1.id]||0,depth[a.p2.id]||0))-(Math.min(depth[b.p1.id]||0,depth[b.p2.id]||0)));
+  })();
+
+  const [scope,      setScope]      = useState("all");
+  const [pairSearch, setPairSearch] = useState("");
+  const [format,     setFormat]     = useState("png");
+  const [sizeId,     setSizeId]     = useState("3x");
+  const [generating, setGenerating] = useState(false);
+  const [status,     setStatus]     = useState("");
+  const [preview,    setPreview]    = useState(null); // {w,h}
+
+  const filteredPairs = pairSearch.trim()
+    ? spousePairs.filter(s=>(s.p1.name+s.p2.name).toLowerCase().includes(pairSearch.toLowerCase()))
+    : spousePairs;
+
+  const scopeLabel = ()=>{
+    if(scope==="all") return "Tüm ağaç ("+allPeople.length+" kişi)";
+    const pair=spousePairs.find(s=>s.key===scope);
+    return pair ? pair.p1.name+" & "+pair.p2.name+" alt soyu" : "?";
+  };
+
+  const buildSubset = ()=>{
+    if(scope==="all") return {subPeople:allPeople, subRels:allRels};
+    const pair=spousePairs.find(s=>s.key===scope);
+    if(!pair) return {subPeople:allPeople, subRels:allRels};
+    return collectSubtree([pair.p1.id, pair.p2.id], allPeople, allRels);
+  };
+
+  // Compute preview dimensions whenever scope/size changes
+  useEffect(()=>{
+    const {subPeople, subRels} = buildSubset();
+    const result = buildTreeSVGString(subPeople, subRels);
+    if(!result){setPreview(null);return;}
+    const sc = EXPORT_SIZES.find(s=>s.id===sizeId)?.scale||3;
+    setPreview({w:Math.round(result.W*sc), h:Math.round(result.H*sc)});
+  },[scope, sizeId]);
+
+  const handleExport = async ()=>{
+    setGenerating(true); setStatus("Görüntü hazırlanıyor…");
+    try {
+      const {subPeople, subRels} = buildSubset();
+      const title = scope==="all" ? tree.name : scopeLabel();
+      const sc  = EXPORT_SIZES.find(s=>s.id===sizeId)?.scale||3;
+      const fmt = EXPORT_FORMATS.find(f=>f.id===format)||EXPORT_FORMATS[0];
+
+      setStatus("Render ediliyor… (büyük ağaçlar birkaç saniye alabilir)");
+      const result = buildTreeSVGString(subPeople, subRels);
+      if(!result){setStatus("Hata: diyagram oluşturulamadı.");setGenerating(false);return;}
+      const {svgString} = result;
+
+      const dataUrl = await new Promise((res,rej)=>{
+        const blob=new Blob([svgString],{type:"image/svg+xml"});
+        const url=URL.createObjectURL(blob);
+        const img=new Image();
+        img.onload=()=>{
+          const canvas=document.createElement("canvas");
+          canvas.width =Math.round(img.naturalWidth *sc);
+          canvas.height=Math.round(img.naturalHeight*sc);
+          const ctx=canvas.getContext("2d");
+          if(format!=="png"){ ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,canvas.width,canvas.height); }
+          ctx.scale(sc,sc);
+          ctx.drawImage(img,0,0);
+          URL.revokeObjectURL(url);
+          res(canvas.toDataURL(fmt.mime, fmt.quality||1.0));
+        };
+        img.onerror=rej;
+        img.src=url;
+      });
+
+      setStatus("İndiriliyor…");
+      const a=document.createElement("a");
+      a.href=dataUrl;
+      a.download=(title||tree.name).replace(/[^a-zA-Z0-9_À-ɏ ]/g,"_")+"_soyagaci"+fmt.ext;
+      a.click();
+      const kb=Math.round(dataUrl.length*0.75/1024);
+      setStatus("✓ İndirildi · "+Math.round(result.W*sc)+"×"+Math.round(result.H*sc)+" px · ~"+kb+" KB");
+    } catch(e){ console.error(e); setStatus("Hata: "+e.message); }
+    setGenerating(false);
+  };
+
+  const lbl={fontSize:12,color:"#64748b",fontWeight:600,marginBottom:6,display:"block",fontFamily:FONT};
+  const inp={background:"#f8faff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"10px 13px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT};
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"#00000099",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:1002}}>
+      <div style={{background:"#ffffff",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:540,maxHeight:"92vh",overflow:"auto",paddingBottom:"env(safe-area-inset-bottom)"}}>
+        <div style={{display:"flex",justifyContent:"center",padding:"12px 0 0"}}><div style={{width:40,height:4,borderRadius:2,background:"#d1d9f0"}}/></div>
+        <div style={{padding:"12px 18px 8px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <span style={{fontSize:16,fontWeight:700,color:"#10b981",fontFamily:FONT}}>🖼️ Görüntü Olarak Kaydet</span>
+          <button onClick={onClose} style={{background:"transparent",border:"none",color:"#64748b",fontSize:24,cursor:"pointer"}}>✕</button>
+        </div>
+
+        <div style={{padding:"0 16px 24px",display:"flex",flexDirection:"column",gap:16}}>
+
+          {/* ── Scope ── */}
+          <div>
+            <label style={lbl}>KAPSAM</label>
+            <div onClick={()=>setScope("all")} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 13px",borderRadius:10,border:"2px solid "+(scope==="all"?"#10b981":"#e2e8f0"),background:scope==="all"?"#f0fdf4":"#f8faff",cursor:"pointer",marginBottom:8}}>
+              <span style={{fontSize:18}}>🌳</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:700,color:scope==="all"?"#10b981":"#1e293b",fontFamily:FONT}}>Tüm Ağaç</div>
+                <div style={{fontSize:11,color:"#64748b",fontFamily:FONT}}>{allPeople.length} kişi</div>
+              </div>
+              {scope==="all"&&<span style={{color:"#10b981",fontSize:18}}>✓</span>}
+            </div>
+            {spousePairs.length>0&&<>
+              <label style={{...lbl,marginTop:4}}>EŞ ÇİFTİ SEÇİN (ALT SOY)</label>
+              <div style={{position:"relative",marginBottom:8}}>
+                <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#94a3b8",fontSize:14,pointerEvents:"none"}}>🔍</span>
+                <input value={pairSearch} onChange={e=>setPairSearch(e.target.value)} placeholder="İsim ile ara…" style={{...inp,paddingLeft:32}}/>
+                {pairSearch&&<button onClick={()=>setPairSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:15}}>✕</button>}
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:180,overflow:"auto"}}>
+                {filteredPairs.map(s=>{
+                  const sel=scope===s.key;
+                  return(
+                    <div key={s.key} onClick={()=>setScope(s.key)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,border:"2px solid "+(sel?"#10b981":"#e2e8f0"),background:sel?"#f0fdf4":"#f8faff",cursor:"pointer"}}>
+                      <div style={{display:"flex",gap:4}}>
+                        {[s.p1,s.p2].map(px=>(
+                          <div key={px.id} style={{width:30,height:30,borderRadius:"50%",overflow:"hidden",border:"2px solid "+(px.gender==="male"?C.male:C.female),background:px.gender==="male"?"#dbeafe":"#fce7f3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>
+                            {px.photo?<img src={px.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(px.gender==="male"?"♂":"♀")}
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:sel?"#10b981":"#1e293b",fontFamily:FONT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.p1.name} & {s.p2.name}</div>
+                        <div style={{fontSize:11,color:"#64748b",fontFamily:FONT}}>Alt soy ağacı</div>
+                      </div>
+                      {sel&&<span style={{color:"#10b981",fontSize:18}}>✓</span>}
+                    </div>
+                  );
+                })}
+                {filteredPairs.length===0&&pairSearch&&<div style={{textAlign:"center",color:"#94a3b8",fontSize:13,padding:"10px 0",fontFamily:FONT}}>Sonuç bulunamadı</div>}
+              </div>
+            </>}
+          </div>
+
+          {/* ── Format ── */}
+          <div>
+            <label style={lbl}>DOSYA TÜRÜ</label>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+              {EXPORT_FORMATS.map(f=>(
+                <div key={f.id} onClick={()=>setFormat(f.id)} style={{padding:"12px 8px",borderRadius:10,border:"2px solid "+(format===f.id?"#10b981":"#e2e8f0"),background:format===f.id?"#f0fdf4":"#f8faff",cursor:"pointer",textAlign:"center"}}>
+                  <div style={{fontSize:15,fontWeight:700,color:format===f.id?"#10b981":"#1e293b",fontFamily:FONT}}>{f.label}</div>
+                  <div style={{fontSize:10,color:"#94a3b8",fontFamily:FONT,marginTop:3,lineHeight:1.3}}>{f.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Size ── */}
+          <div>
+            <label style={lbl}>ÇÖZÜNÜRLÜK</label>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
+              {EXPORT_SIZES.map(s=>(
+                <div key={s.id} onClick={()=>setSizeId(s.id)} style={{padding:"10px 4px",borderRadius:10,border:"2px solid "+(sizeId===s.id?"#10b981":"#e2e8f0"),background:sizeId===s.id?"#f0fdf4":"#f8faff",cursor:"pointer",textAlign:"center"}}>
+                  <div style={{fontSize:15,fontWeight:700,color:sizeId===s.id?"#10b981":"#1e293b",fontFamily:FONT}}>{s.label}</div>
+                  <div style={{fontSize:10,color:"#94a3b8",fontFamily:FONT,marginTop:2}}>{s.desc.split(",")[0]}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Preview info ── */}
+          <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:12}}>
+            <span style={{fontSize:24}}>🖼️</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#1e293b",fontFamily:FONT}}>{scopeLabel()}</div>
+              <div style={{fontSize:12,color:"#10b981",fontFamily:FONT,marginTop:2}}>
+                {preview ? preview.w.toLocaleString("tr-TR")+" × "+preview.h.toLocaleString("tr-TR")+" piksel" : "Hesaplanıyor…"}
+                {" · "}{EXPORT_FORMATS.find(f=>f.id===format)?.label} · {EXPORT_SIZES.find(s=>s.id===sizeId)?.scale}× ölçek
+              </div>
+            </div>
+          </div>
+
+          {/* ── Status ── */}
+          {status&&<div style={{textAlign:"center",fontSize:13,fontFamily:FONT,color:status.startsWith("✓")?"#10b981":status.startsWith("Hata")?"#ef4444":"#64748b",padding:"4px 0"}}>{status}</div>}
+
+          {/* ── Export button ── */}
+          <button onClick={handleExport} disabled={generating}
+            style={{background:generating?"#bbf7d0":"#10b981",border:"1px solid #10b981",borderRadius:12,color:"#ffffff",padding:"15px",fontSize:16,cursor:generating?"not-allowed":"pointer",fontWeight:700,width:"100%",fontFamily:FONT}}>
+            {generating?"⏳ Hazırlanıyor…":"🖼️ İndir"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PrintModal({tree,onClose}) {
   const allPeople = tree.people||[], allRels = tree.rels||[];
 
@@ -1398,23 +1621,6 @@ function PrintModal({tree,onClose}) {
     setGenerating(false);
   };
 
-  const handleExportPng = async ()=>{
-    setGenerating(true); setStatus("Yüksek çözünürlüklü PNG hazırlanıyor…");
-    try {
-      const {subPeople, subRels} = buildSubset();
-      const title = scope==="all" ? tree.name : scopeLabel();
-      setStatus("Render ediliyor… (büyük ağaçlar biraz sürebilir)");
-      const result = await buildExportPng(subPeople, subRels, 3);
-      if(!result){setStatus("Hata: diyagram oluşturulamadı.");setGenerating(false);return;}
-      setStatus("İndiriliyor…");
-      const a = document.createElement("a");
-      a.href = result.dataUrl;
-      a.download = (title||tree.name).replace(/[^a-zA-Z0-9_\u00C0-\u024F ]/g,"_") + "_soyagaci.png";
-      a.click();
-      setStatus("✓ PNG indirildi (" + Math.round(result.w/100)/10 + " × " + Math.round(result.h/100)/10 + " K px)");
-    } catch(e){ console.error(e); setStatus("Hata oluştu: "+e.message); }
-    setGenerating(false);
-  };
 
   const inp={background:"#f8faff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"10px 13px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT};
   const lbl={fontSize:12,color:"#64748b",fontWeight:600,marginBottom:6,display:"block",fontFamily:FONT};
@@ -1424,7 +1630,7 @@ function PrintModal({tree,onClose}) {
       <div style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:540,maxHeight:"90vh",overflow:"auto",paddingBottom:"env(safe-area-inset-bottom)"}}>
         <div style={{display:"flex",justifyContent:"center",padding:"12px 0 0"}}><div style={{width:40,height:4,borderRadius:2,background:"#d1d9f0"}}/></div>
         <div style={{padding:"12px 18px 8px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <span style={{fontSize:16,fontWeight:700,color:"#6366f1",fontFamily:FONT}}>🖨️ Yazdır &amp; Dışa Aktar</span>
+          <span style={{fontSize:16,fontWeight:700,color:"#6366f1",fontFamily:FONT}}>🖨️ Yazdır / PDF Kaydet</span>
           <button onClick={onClose} style={{background:"transparent",border:"none",color:"#64748b",fontSize:24,cursor:"pointer"}}>✕</button>
         </div>
         <div style={{padding:"0 16px 20px",display:"flex",flexDirection:"column",gap:14}}>
@@ -1496,27 +1702,13 @@ function PrintModal({tree,onClose}) {
           {/* Status */}
           {status&&<div style={{textAlign:"center",fontSize:13,fontFamily:FONT,color:status.startsWith("✓")?"#10b981":"#64748b"}}>{status}</div>}
 
-          {/* Action buttons */}
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {/* Print */}
-            <div style={{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#4f46e5",lineHeight:1.6,fontFamily:FONT}}>
-              🖨️ Açılan pencerede print diyaloğu başlar. <strong>"PDF Olarak Kaydet"</strong> seçebilirsiniz.
-            </div>
-            <button onClick={handlePrint} disabled={generating}
-              style={{background:generating?"#c7d2fe":"#6366f1",border:"1px solid #6366f1",borderRadius:12,color:"#ffffff",padding:"14px",fontSize:15,cursor:generating?"not-allowed":"pointer",fontWeight:700,width:"100%",fontFamily:FONT,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              <span style={{fontSize:18}}>🖨️</span>
-              {generating?"⏳ Hazırlanıyor…":"Yazdır / PDF Kaydet"}
-            </button>
-            {/* PNG Export */}
-            <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#166534",lineHeight:1.6,fontFamily:FONT}}>
-              🖼️ Tüm ağaç tek bir <strong>yüksek çözünürlüklü PNG</strong> olarak indirilir (3× ölçek). Büyük ağaçlarda birkaç saniye sürebilir.
-            </div>
-            <button onClick={handleExportPng} disabled={generating}
-              style={{background:generating?"#bbf7d0":"#10b981",border:"1px solid #10b981",borderRadius:12,color:"#ffffff",padding:"14px",fontSize:15,cursor:generating?"not-allowed":"pointer",fontWeight:700,width:"100%",fontFamily:FONT,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              <span style={{fontSize:18}}>🖼️</span>
-              {generating?"⏳ Hazırlanıyor…":"PNG Olarak İndir"}
-            </button>
+          <div style={{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:10,padding:"11px 14px",fontSize:13,color:"#4f46e5",lineHeight:1.6,fontFamily:FONT}}>
+            💡 Açılan pencerede print diyaloğu başlar. <strong>"PDF Olarak Kaydet"</strong> seçin.
           </div>
+          <button onClick={handlePrint} disabled={generating}
+            style={{background:generating?"#c7d2fe":"#6366f1",border:"1px solid #6366f1",borderRadius:12,color:"#ffffff",padding:"15px",fontSize:16,cursor:generating?"not-allowed":"pointer",fontWeight:700,width:"100%",fontFamily:FONT}}>
+            {generating?"⏳ Hazırlanıyor…":"🖨️ Yazdır / PDF Kaydet"}
+          </button>
         </div>
       </div>
     </div>
@@ -1537,6 +1729,7 @@ function TreeEditor({tree,onSave,onBack}) {
   const [confirmPerson,setConfirmPerson]=useState(null);
   const [confirmRel,setConfirmRel]=useState(null);
   const [showPrint,setShowPrint]=useState(false);
+  const [showExport,setShowExport]=useState(false);
   const [peopleSearch,setPeopleSearch]=useState("");
   const [relsSearch,setRelsSearch]=useState("");
 
@@ -1592,6 +1785,7 @@ function TreeEditor({tree,onSave,onBack}) {
         <input value={treeName} onChange={e=>setTreeName(e.target.value)} placeholder="Ağaç adı…"
           style={{flex:1,background:"transparent",border:"none",borderBottom:"1px solid #e2e8f0",color:"#1e293b",fontSize:16,fontWeight:700,padding:"4px 2px",outline:"none",fontFamily:FONT,minWidth:0}}/>
         <button onClick={()=>setShowPrint(true)} style={{...btn(false,true),flexShrink:0}}>🖨️</button>
+        <button onClick={()=>setShowExport(true)} style={{...btn(false,true),flexShrink:0,color:"#10b981",borderColor:"#86efac"}}>🖼️</button>
         <button onClick={handleSave} disabled={saving||!treeName.trim()} style={{background:saved?"#d1fae5":"#6366f1",border:"1px solid "+(saved?"#10b981":"#6366f1"),borderRadius:9,color:saved?"#10b981":"#ffffff",padding:"8px 13px",fontSize:13,cursor:"pointer",flexShrink:0,fontFamily:FONT,fontWeight:600,opacity:(!treeName.trim()||saving)?0.5:1}}>
           {saving?"…":saved?"✓ Kaydedildi":"💾 Kaydet"}
         </button>
@@ -1790,6 +1984,7 @@ function TreeEditor({tree,onSave,onBack}) {
       {confirmPerson&&<Confirm message={'"'+(people.find(p=>p.id===confirmPerson)||{}).name+'" silinsin mi?'} onYes={()=>delPerson(confirmPerson)} onNo={()=>setConfirmPerson(null)}/>}
       {confirmRel&&<Confirm message="Bu ilişkiyi silmek istediğinizden emin misiniz?" onYes={()=>delRel(confirmRel)} onNo={()=>setConfirmRel(null)}/>}
       {showPrint&&<PrintModal tree={{name:treeName,people,rels}} onClose={()=>setShowPrint(false)}/>}
+      {showExport&&<ExportModal tree={{name:treeName,people,rels}} onClose={()=>setShowExport(false)}/>}
     </div>
   );
 }
