@@ -8,7 +8,7 @@ const C = {
   text:"#1e293b", muted:"#64748b", line:"#94a3b8",
   danger:"#ef4444", success:"#10b981",
 };
-const NW=130, NH=180, MIN_GAP=20, VGAP=110;
+const NW=140, NH=230, MIN_GAP=20, VGAP=120;
 const FONT = "'Poppins',sans-serif";
 
 const REL_DEFS = [
@@ -339,116 +339,115 @@ function buildLayout(people, rels) {
   };
 }
 
-// ─── SVG Node — portrait card (matches person list design) ──────────────────
+// ─── SVG Node ────────────────────────────────────────────────────────────────
 function Node({person,p,sel,onClick,outsider}) {
-  const col        = person.gender==="male" ? C.male : C.female;
-  const colDark    = person.gender==="male" ? "#1d4ed8" : "#be185d";
-  const normalBg   = person.gender==="male" ? "#dbeafe" : "#fce7f3";
-  const outsiderBg = person.gender==="male" ? "#1e40af" : "#9d174d";
-  const cardBg     = sel ? "#eef2ff" : (outsider ? outsiderBg : "#ffffff");
-  const photoBg    = sel ? "#e0e7ff" : normalBg;
-  const nameFill   = outsider && !sel ? "#ffffff" : "#1e293b";
-  const yearFill   = outsider && !sel ? "#bfdbfe" : "#64748b";
-  const isDead     = !!person.died;
+  const col      = person.gender==="male" ? C.male : C.female;
+  const normalBg = person.gender==="male" ? "#dbeafe" : "#fce7f3";
+  const isDead   = !!person.died;
 
-  // Layout: photo takes top ~65% of card, info takes bottom ~35%
-  const STRIP  = 5;               // top colour strip height
-  const PH     = NH - STRIP - 52; // photo area height
-  const ovalRx = NW * 0.54;
-  const ovalRy = 16;
-  const photoBottom = STRIP + PH;
-  const infoTop     = photoBottom - ovalRy + 4;
-  const cid = "cp-"+person.id;
-  const fid = "sh-"+person.id;
-  const gid = "gr-"+person.id;
+  // Layout
+  const INFO_H  = 52;              // info section height (white area)
+  const PH      = NH - INFO_H;    // photo area height
+  const cid = "ncp-"+person.id;
+  const fid = "nsh-"+person.id;
+
+  // Name split: first name / surname
+  const parts    = person.name.trim().split(" ");
+  const surname  = parts.length > 1 ? parts[parts.length-1] : "";
+  const firstName= parts.length > 1 ? parts.slice(0,-1).join(" ") : parts[0];
+  const maxCh    = 14;
+  const fn = firstName.length > maxCh ? firstName.slice(0,maxCh-1)+"…" : firstName;
+  const sn = surname.length   > maxCh ? surname.slice(0,maxCh-1)+"…"  : surname;
+
+  // Info area colours (mirrors HTML card)
+  const infoBg   = outsider && !sel
+    ? (person.gender==="male" ? "#1e40af" : "#9d174d")
+    : "#ffffff";
+  const nameFill = outsider && !sel ? "#ffffff" : "#1e293b";
+  const fnFill   = outsider && !sel ? "#bfdbfe" : "#475569";
+  const yearFill = outsider && !sel ? "#bfdbfe" : "#64748b";
+  const cardBg   = sel ? "#eef2ff" : infoBg;
 
   return (
     <g transform={"translate("+(p.x-NW/2)+","+(p.y-NH/2)+")"} data-node="1"
        onClick={e=>{e.stopPropagation();onClick(person.id);}} style={{cursor:"pointer"}}>
       <defs>
-        {/* Card clip — rounded rect */}
-        <clipPath id={"cc-"+person.id}>
-          <rect width={NW} height={NH} rx={14}/>
-        </clipPath>
-        {/* Photo area clip */}
+        {/* Photo clip — top rounded corners only */}
         <clipPath id={cid}>
-          <rect x={0} y={STRIP} width={NW} height={PH}/>
+          {/* Top corners rounded (matches card), bottom straight */}
+          <path d={"M14,0 L"+(NW-14)+",0 Q"+NW+",0 "+NW+",14 L"+NW+","+PH+" L0,"+PH+" L0,14 Q0,0 14,0 Z"}/>
+        </clipPath>
+        {/* Full card clip */}
+        <clipPath id={"ncc-"+person.id}>
+          <rect width={NW} height={NH} rx={14}/>
         </clipPath>
         {/* Drop shadow */}
         <filter id={fid} x="-25%" y="-25%" width="150%" height="150%">
-          <feDropShadow dx="0" dy={sel?4:2} stdDeviation={sel?7:4}
-            floodColor={sel?"#6366f1":col} floodOpacity={sel?0.35:0.18}/>
+          <feDropShadow dx="0" dy={sel?4:2} stdDeviation={sel?6:3}
+            floodColor={sel?"#6366f1":col} floodOpacity={sel?0.32:0.16}/>
         </filter>
-        {/* Subtle gradient overlay on photo bottom */}
-        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="55%" stopColor={cardBg} stopOpacity="0"/>
-          <stop offset="100%" stopColor={cardBg} stopOpacity="1"/>
-        </linearGradient>
       </defs>
 
-      {/* ── Card shell ── */}
-      <rect width={NW} height={NH} rx={14} fill={cardBg}
+      {/* ── Card background ── */}
+      <rect width={NW} height={NH} rx={14}
+        fill={infoBg}
         stroke={sel?"#6366f1":col}
         strokeWidth={sel?2.5:(outsider?2:1.5)}
         filter={"url(#"+fid+")"}
-        opacity={isDead?0.7:1}/>
+        opacity={isDead?0.72:1}/>
 
-      {/* Outsider dashed inner border */}
-      {outsider&&!sel&&
-        <rect x={2} y={2} width={NW-4} height={NH-4} rx={12}
-          fill="none" stroke={col} strokeWidth={1} strokeDasharray="5 3" opacity={0.4}/>}
-
-      {/* ── Photo area ── */}
+      {/* ── Photo area (top) ── */}
       {person.photo
         ? <image href={person.photo}
-            x={0} y={STRIP} width={NW} height={PH}
+            x={0} y={0} width={NW} height={PH}
             clipPath={"url(#"+cid+")"}
             preserveAspectRatio="xMidYMid slice"/>
         : <>
-            <rect x={0} y={STRIP} width={NW} height={PH}
-              fill={photoBg} clipPath={"url(#"+cid+")"}/>
-            <text x={NW/2} y={STRIP+PH*0.56}
-              textAnchor="middle" dominantBaseline="middle"
-              fill={col} fontSize={50} fontFamily="serif" opacity={0.35}>
+            <rect x={0} y={0} width={NW} height={PH}
+              fill={normalBg} clipPath={"url(#"+cid+")"}/>
+            <text x={NW/2} y={PH*0.5} textAnchor="middle" dominantBaseline="middle"
+              fill={col} fontSize={52} fontFamily="serif" opacity={0.4}>
               {person.gender==="male"?"♂":"♀"}
             </text>
           </>
       }
-
-      {/* Gradient fade at photo bottom */}
-      <rect x={0} y={STRIP} width={NW} height={PH}
-        fill={"url(#"+gid+")"}
+      {/* Vignette border on photo */}
+      <rect x={0} y={0} width={NW} height={PH}
+        fill="none" stroke={col} strokeWidth={2.5} strokeOpacity={0.2}
         clipPath={"url(#"+cid+")"}/>
 
-      {/* ── Bottom colour strip only ── */}
-      <rect x={0} y={NH-STRIP} width={NW} height={STRIP} rx={2} fill={col} opacity={0.9}/>
+      {/* ── Info area divider line ── */}
+      <line x1={0} y1={PH} x2={NW} y2={PH}
+        stroke={col} strokeWidth={1.5} opacity={0.3}/>
 
-      {/* ── Info section — name + years only ── */}
-      {/* Name */}
-      <text x={NW/2} y={infoTop+14} textAnchor="middle"
-        fill={nameFill} fontSize={11} fontWeight="700" fontFamily={FONT}>
-        {person.name.length>16?person.name.slice(0,15)+"…":person.name}
+      {/* ── Info area (bottom) — white background ── */}
+      {/* First name — light */}
+      {surname&&
+        <text x={NW/2} y={PH+14} textAnchor="middle"
+          fill={fnFill} fontSize={9} fontWeight="500" fontFamily={FONT}>{fn}</text>}
+      {/* Surname — bold */}
+      <text x={NW/2} y={PH+(surname?27:16)} textAnchor="middle"
+        fill={nameFill} fontSize={11} fontWeight="800" fontFamily={FONT}>
+        {sn||fn}{isDead&&<tspan fill="#94a3b8" fontSize={9}> ✝</tspan>}
       </text>
-
       {/* Years */}
-      <text x={NW/2} y={infoTop+28} textAnchor="middle"
+      <text x={NW/2} y={PH+(surname?40:30)} textAnchor="middle"
         fill={yearFill} fontSize={9} fontFamily={FONT}>
         {person.born||"?"}{person.died?" – "+person.died:""}
       </text>
 
-      {/* Death cross */}
-      {isDead&&
-        <text x={NW-8} y={STRIP+14} textAnchor="middle"
-          fill="#ffffff" fontSize={12} opacity={0.9} fontFamily="serif">✝</text>}
+      {/* ── Outsider dashed inner ring ── */}
+      {outsider&&!sel&&
+        <rect x={2} y={2} width={NW-4} height={NH-4} rx={12}
+          fill="none" stroke={col} strokeWidth={1}
+          strokeDasharray="5 3" opacity={0.45}/>}
 
-      {/* Selected ring */}
-      {sel&&
-        <rect width={NW} height={NH} rx={14} fill="none"
-          stroke="#6366f1" strokeWidth={2.5} opacity={0.7}/>}
+      {/* ── Selected ring ── */}
+      {sel&&<rect width={NW} height={NH} rx={14} fill="none"
+        stroke="#6366f1" strokeWidth={2.5} opacity={0.85}/>}
     </g>
   );
 }
-
 // ─── Canvas ───────────────────────────────────────────────────────────────────
 function Canvas({people,rels,selId,onSelect}) {
   const wrapRef=useRef(null),svgRef=useRef(null);
@@ -485,9 +484,9 @@ function Canvas({people,rels,selId,onSelect}) {
   const wh=e=>{ e.preventDefault(); const f=e.deltaY<0?1.1:0.91; const nv={...vpRef.current,s:Math.min(3,Math.max(0.2,vpRef.current.s*f))}; vpRef.current=nv; setVp({...nv}); };
   const doFit=()=>{ const v=fit(sz.w,sz.h); vpRef.current=v; setVp(v); };
 
-  // ── Draw edges using couple midpoints ─────────────────────────────────────
-  const spouseColor = RMAP["spouse"]?.color || "#f59e0b";
-  const parentColor = RMAP["parent"]?.color || "#6366f1";
+  // ── Draw edges — thick black lines ───────────────────────────────────────
+  const LINE_COLOR  = "#1e293b";  // near-black
+  const LINE_W      = 3;          // stroke width
 
   const edgeElements = [];
   const drawnSpouse = new Set();
@@ -500,28 +499,20 @@ function Canvas({people,rels,selId,onSelect}) {
     const mx=(a.x+b.x)/2, my=a.y;
     edgeElements.push(
       <g key={"sp-"+key}>
-        <line x1={a.x} y1={my} x2={b.x} y2={my} stroke={spouseColor} strokeWidth={2} strokeDasharray="6 3" opacity={0.85}/>
-        <circle cx={mx} cy={my} r={8} fill={spouseColor} opacity={0.15}/>
-        <text x={mx} y={my+4} textAnchor="middle" fontSize={11} fill={spouseColor}>♥</text>
+        <line x1={a.x} y1={my} x2={b.x} y2={my}
+          stroke={LINE_COLOR} strokeWidth={LINE_W} strokeDasharray="8 4" opacity={0.85}/>
+        <circle cx={mx} cy={my} r={10} fill="#ffffff" stroke={LINE_COLOR} strokeWidth={LINE_W*0.7}/>
+        <text x={mx} y={my+4} textAnchor="middle" fontSize={11} fill={LINE_COLOR}>♥</text>
       </g>
     );
   });
 
-  // 2. Parent→child edges: from couple midpoint down to child
-  //    If child has two parents who are a couple → edge from couple centre
-  //    If child has only one known parent → edge from that parent
+  // 2. Parent→child edges
   const drawnParent = new Set();
   rels.filter(r=>VERTICAL.has(r.type)).forEach(r=>{
     if(drawnParent.has(r.id)) return; drawnParent.add(r.id);
     const child=pos[r.p2]; if(!child) return;
-    const col = (RMAP[r.type]?.color) || parentColor;
-    const dash = r.type==="grandparent"?"7 4":r.type==="uncle"?"3 3":"none";
 
-    // Find if there's a couple point for parent r.p1 + a co-parent
-    const coParents = (rels.filter(r2=>VERTICAL.has(r2.type)&&r2.p2===r.p2&&r2.p1!==r.p1).map(r2=>r2.p1));
-    const coupleKey = coParents.length
-      ? "couple:"+[r.p1,...coParents].flatMap(a=>[r.p1,...coParents].map(b=>a<b?a+"|"+b:b+"|"+a)).find(k=>couplePoints[k])
-      : null;
     const cp = Object.values(couplePoints).find(cp=>
       (cp.p1===r.p1||cp.p2===r.p1) && cp.children.includes(r.p2)
     );
@@ -535,7 +526,7 @@ function Canvas({people,rels,selId,onSelect}) {
     edgeElements.push(
       <path key={"pc-"+r.id}
         d={"M"+fromX+","+fy+" C"+fromX+","+cy+" "+child.x+","+cy+" "+child.x+","+ty}
-        fill="none" stroke={col} strokeWidth={1.8} strokeDasharray={dash} opacity={0.75}/>
+        fill="none" stroke={LINE_COLOR} strokeWidth={LINE_W} opacity={0.85}/>
     );
   });
 
