@@ -926,6 +926,60 @@ function Confirm({message,onYes,onNo}) {
 }
 
 // ─── Print helpers ────────────────────────────────────────────────────────────
+// ─── Subtree filter ──────────────────────────────────────────────────────────
+// Given a root person (and optionally their spouse), return all descendants
+function collectSubtree(rootIds, allPeople, allRels) {
+  // Build children map including autoSpouse logic
+  const childrenOf = {};
+  const spouseOf   = {};
+  allPeople.forEach(p => { childrenOf[p.id]=[]; spouseOf[p.id]=[]; });
+  allRels.forEach(({type,p1,p2}) => {
+    if (type==="parent") {
+      if (!childrenOf[p1]) childrenOf[p1]=[];
+      childrenOf[p1].push(p2);
+    } else if (type==="spouse") {
+      if (!spouseOf[p1]) spouseOf[p1]=[];
+      if (!spouseOf[p2]) spouseOf[p2]=[];
+      spouseOf[p1].push(p2);
+      spouseOf[p2].push(p1);
+    }
+  });
+  // autoSpouse: add spouse's children too
+  allRels.forEach(({type,p1,p2}) => {
+    if (type==="parent") {
+      (spouseOf[p1]||[]).forEach(sid => {
+        if (!(childrenOf[sid]||[]).includes(p2)) {
+          if (!childrenOf[sid]) childrenOf[sid]=[];
+          childrenOf[sid].push(p2);
+        }
+      });
+    }
+  });
+
+  const included = new Set(rootIds);
+  const queue    = [...rootIds];
+  // Also include spouses of roots
+  rootIds.forEach(id => { (spouseOf[id]||[]).forEach(s => { included.add(s); }); });
+
+  while (queue.length) {
+    const cur = queue.shift();
+    (childrenOf[cur]||[]).forEach(cid => {
+      if (!included.has(cid)) {
+        included.add(cid);
+        queue.push(cid);
+        // include spouse of child
+        (spouseOf[cid]||[]).forEach(s => { included.add(s); });
+      }
+    });
+  }
+
+  const subPeople = allPeople.filter(p => included.has(p.id));
+  const subRels   = allRels.filter(r =>
+    (included.has(r.p1) && included.has(r.p2))
+  );
+  return { subPeople, subRels };
+}
+
 function buildTreeSVGString(people,rels) {
   const {pos}=buildLayout(people,rels);
   const xs=Object.values(pos).map(p=>p.x),ys=Object.values(pos).map(p=>p.y);
@@ -959,85 +1013,196 @@ async function svgToDataUrl(svgString) {
   return new Promise((res,rej)=>{ const blob=new Blob([svgString],{type:"image/svg+xml"}); const url=URL.createObjectURL(blob); const img=new Image(); img.onload=()=>{ const scale=Math.min(2400/img.naturalWidth,1600/img.naturalHeight,2); const canvas=document.createElement("canvas"); canvas.width=img.naturalWidth*scale; canvas.height=img.naturalHeight*scale; const ctx=canvas.getContext("2d"); ctx.fillStyle="#f0f4ff"; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.scale(scale,scale); ctx.drawImage(img,0,0); URL.revokeObjectURL(url); res(canvas.toDataURL("image/png")); }; img.onerror=rej; img.src=url; });
 }
 
-function buildPrintHTML(tree, treeImg) {
+function buildPrintHTML(tree, tileImgs, title) {
+  // tileImgs: array of {dataUrl, w, h} — one per page tile
+  // title: custom title override
   const people = tree.people || [], rels = tree.rels || [];
   const today = new Date().toLocaleDateString("tr-TR", {day:"2-digit", month:"long", year:"numeric"});
-  const imgHtml = treeImg
-    ? '<img src="' + treeImg + '" style="width:100%;height:auto;object-fit:contain;display:block;"/>'
-    : '<p style="text-align:center;color:#999;padding:40px 0">Diyagram oluşturulamadı</p>';
+  const displayTitle = title || tree.name;
+
+  const pageHtmls = tileImgs.map((tile, i) => {
+    const imgHtml = tile
+      ? '<img src="' + tile.dataUrl + '" style="width:100%;height:auto;object-fit:contain;display:block;max-height:185mm"/>'
+      : '<p style="text-align:center;color:#999;padding:40px 0">Diyagram oluşturulamadı</p>';
+    const isLast = i === tileImgs.length - 1;
+    return [
+      '<div class="page">',
+      '  <div class="header">',
+      '    <h1>' + displayTitle + (tileImgs.length>1?' <span style="font-size:12pt;color:#64748b;font-weight:400">'+(i+1)+'/'+tileImgs.length+'</span>':'') + '</h1>',
+      '    <p>Soy Ağacı &middot; ' + today + ' &middot; ' + people.length + ' kişi</p>',
+      '  </div>',
+      '  <hr class="divider"/>',
+      '  <div class="diagram">' + imgHtml + '</div>',
+      '  <div class="footer">Yazdırıldı: ' + today + '</div>',
+      '</div>',
+    ].join('\n');
+  });
+
   return [
     '<!DOCTYPE html>',
     '<html lang="tr">',
     '<head>',
     '<meta charset="UTF-8"/>',
-    '<title>' + tree.name + ' — Soy Ağacı</title>',
+    '<title>' + displayTitle + ' — Soy Ağacı</title>',
     '<style>',
-    '  * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }',
-    '  body { background: white; }',
-    '  .page {',
-    '    padding: 10mm 12mm;',
-    '    display: flex;',
-    '    flex-direction: column;',
-    '    align-items: center;',
-    '  }',
-    '  .header { text-align: center; margin-bottom: 8mm; width: 100%; }',
-    '  .header h1 { font-size: 20pt; font-weight: 700; color: #1e293b; }',
-    '  .header p  { font-size: 9pt; color: #64748b; margin-top: 3px; }',
-    '  .divider { border: none; border-top: 1px solid #d1d9f0; width: 100%; margin-bottom: 8mm; }',
-    '  .diagram { width: 100%; }',
-    '  .footer { font-size: 8pt; color: #94a3b8; text-align: right; margin-top: 6mm; width: 100%; }',
-    '  @media print {',
-    '    @page { margin: 6mm; size: A4 landscape; }',
-    '  }',
+    '  * { box-sizing:border-box; margin:0; padding:0; font-family:sans-serif; }',
+    '  body { background:white; }',
+    '  .page { padding:10mm 12mm; display:flex; flex-direction:column; align-items:center; page-break-after:always; break-after:page; }',
+    '  .page:last-child { page-break-after:avoid; break-after:avoid; }',
+    '  .header { text-align:center; margin-bottom:8mm; width:100%; }',
+    '  .header h1 { font-size:18pt; font-weight:700; color:#1e293b; }',
+    '  .header p  { font-size:9pt; color:#64748b; margin-top:3px; }',
+    '  .divider { border:none; border-top:1px solid #d1d9f0; width:100%; margin-bottom:6mm; }',
+    '  .diagram { width:100%; }',
+    '  .footer { font-size:8pt; color:#94a3b8; text-align:right; margin-top:6mm; width:100%; }',
+    '  @media print { @page { margin:6mm; size:A4 landscape; } }',
     '</style>',
     '</head>',
     '<body>',
-    '  <div class="page">',
-    '    <div class="header">',
-    '      <h1>' + tree.name + '</h1>',
-    '      <p>Soy Ağacı &middot; ' + today + ' &middot; ' + people.length + ' kişi</p>',
-    '    </div>',
-    '    <hr class="divider"/>',
-    '    <div class="diagram">' + imgHtml + '</div>',
-    '    <div class="footer">Yazdırıldı: ' + today + '</div>',
-    '  </div>',
-    '  <script>',
-    '    window.onload = function() {',
-    '      window.print();',
-    '      window.onafterprint = function() { window.close(); };',
-    '    };',
-    '  <\/script>',
+    pageHtmls.join('\n'),
+    '<script>',
+    '  window.onload=function(){window.print();window.onafterprint=function(){window.close();};};',
+    '<\/script>',
     '</body>',
     '</html>'
-  ].join("\n");
+  ].join('\n');
+}
+
+// Split SVG into page-width tiles
+async function buildTiledImgs(people, rels, pageWidthPx) {
+  const result = buildTreeSVGString(people, rels);
+  if (!result) return [null];
+  const {svgString, W, H} = result;
+  // How many landscape A4 pages wide? (A4 landscape ~270mm content = ~1020px at 96dpi)
+  const TILE_W = pageWidthPx || 1020;
+  const numTiles = Math.max(1, Math.ceil(W / TILE_W));
+  if (numTiles === 1) {
+    const dataUrl = await svgToDataUrl(svgString);
+    return [{dataUrl, w:W, h:H}];
+  }
+  // Render each tile by cropping the SVG viewBox
+  const tiles = [];
+  for (let i = 0; i < numTiles; i++) {
+    const vx = i * TILE_W;
+    const vw = Math.min(TILE_W, W - vx);
+    const tileSvg = svgString.replace(
+      /viewBox="[^"]*"/,
+      'viewBox="' + vx + ' 0 ' + vw + ' ' + H + '"'
+    ).replace(/width="[^"]*"/, 'width="' + vw + '"');
+    const dataUrl = await svgToDataUrl(tileSvg);
+    tiles.push({dataUrl, w:vw, h:H});
+  }
+  return tiles;
 }
 function PrintModal({tree,onClose}) {
-  const [generating,setGenerating]=useState(false);
-  const [ready,setReady]=useState(false);
-  const treeImgRef=useRef(null);
-  const people=tree.people||[],rels=tree.rels||[];
-  useEffect(()=>{ (async()=>{ setGenerating(true); try { const r=buildTreeSVGString(people,rels); if(r) treeImgRef.current=await svgToDataUrl(r.svgString); } catch(e){console.error(e);} setGenerating(false); setReady(true); })(); },[]);
-  const handlePrint=()=>{ const html=buildPrintHTML(tree,treeImgRef.current); const w=window.open("","_blank","width=900,height=700"); if(!w){alert("Lütfen popup engelleyiciyi kapatın.");return;} w.document.write(html); w.document.close(); };
+  const allPeople = tree.people||[], allRels = tree.rels||[];
+
+  // Find all spouse pairs (for root selection)
+  const spousePairs = [];
+  const seenPairs   = new Set();
+  allRels.filter(r=>r.type==="spouse").forEach(r=>{
+    const key=[r.p1,r.p2].sort().join("|");
+    if(seenPairs.has(key)) return; seenPairs.add(key);
+    const p1=allPeople.find(p=>p.id===r.p1), p2=allPeople.find(p=>p.id===r.p2);
+    if(p1&&p2) spousePairs.push({key, p1, p2});
+  });
+  // Also add single people not in any pair
+  const pairedIds = new Set(spousePairs.flatMap(s=>[s.p1.id,s.p2.id]));
+  const singles   = allPeople.filter(p=>!pairedIds.has(p.id));
+
+  const [scope,   setScope]   = useState("all"); // "all" | pair key | person id
+  const [generating,setGenerating] = useState(false);
+  const [status,  setStatus]  = useState("");
+  const tilesRef = useRef(null);
+
+  const scopeLabel = ()=>{
+    if(scope==="all") return "Tüm ağaç ("+allPeople.length+" kişi)";
+    const pair=spousePairs.find(s=>s.key===scope);
+    if(pair) return pair.p1.name+" & "+pair.p2.name+" alt soyu";
+    const p=allPeople.find(x=>x.id===scope);
+    return p?(p.name+" alt soyu"):"?";
+  };
+
+  const buildSubset = ()=>{
+    if(scope==="all") return {subPeople:allPeople, subRels:allRels};
+    const pair=spousePairs.find(s=>s.key===scope);
+    const rootIds = pair ? [pair.p1.id, pair.p2.id] : [scope];
+    return collectSubtree(rootIds, allPeople, allRels);
+  };
+
+  const handlePrint = async ()=>{
+    setGenerating(true); setStatus("Diyagram hazırlanıyor…");
+    try {
+      const {subPeople, subRels} = buildSubset();
+      const title = scope==="all" ? tree.name : scopeLabel();
+      const tiles = await buildTiledImgs(subPeople, subRels, 1020);
+      tilesRef.current = {tiles, title, subPeople};
+      setStatus("Yazdırma penceresi açılıyor…");
+      const subTree = {...tree, people:subPeople, rels:subRels};
+      const html = buildPrintHTML(subTree, tiles, title);
+      const w = window.open("","_blank","width=1100,height=750");
+      if(!w){alert("Lütfen popup engelleyiciyi kapatın.");return;}
+      w.document.write(html); w.document.close();
+      setStatus("✓ Hazır");
+    } catch(e){ console.error(e); setStatus("Hata oluştu."); }
+    setGenerating(false);
+  };
+
+  const inp={background:"#f8faff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"10px 13px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT};
+  const lbl={fontSize:12,color:"#64748b",fontWeight:600,marginBottom:6,display:"block",fontFamily:FONT};
+
   return (
     <div style={{position:"fixed",inset:0,background:"#00000099",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:1002}}>
-      <div style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:520,maxHeight:"80vh",overflow:"auto",paddingBottom:"env(safe-area-inset-bottom)"}}>
+      <div style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:540,maxHeight:"90vh",overflow:"auto",paddingBottom:"env(safe-area-inset-bottom)"}}>
         <div style={{display:"flex",justifyContent:"center",padding:"12px 0 0"}}><div style={{width:40,height:4,borderRadius:2,background:"#d1d9f0"}}/></div>
         <div style={{padding:"12px 18px 8px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <span style={{fontSize:16,fontWeight:700,color:"#6366f1",fontFamily:FONT}}>🖨️ Yazdır / PDF Kaydet</span>
           <button onClick={onClose} style={{background:"transparent",border:"none",color:"#64748b",fontSize:24,cursor:"pointer"}}>✕</button>
         </div>
-        <div style={{padding:"0 16px 18px",display:"flex",flexDirection:"column",gap:12}}>
-          <div style={{background:"#f8faff",borderRadius:12,padding:14}}>
-            <div style={{fontSize:14,fontWeight:700,color:"#1e293b",marginBottom:10,fontFamily:FONT}}>{tree.name}</div>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}>
-              <span style={{fontSize:18}}>🌳</span>
-              <span style={{color:"#6366f1",fontSize:14,fontWeight:600,fontFamily:FONT}}>Soy Ağacı Diyagramı</span>
-            </div>
-            <div style={{fontSize:13,color:"#64748b",fontFamily:FONT,marginTop:4}}>{people.length} kişi · Yatay A4 · Tek sayfa</div>
+        <div style={{padding:"0 16px 20px",display:"flex",flexDirection:"column",gap:14}}>
+
+          {/* Scope selector */}
+          <div>
+            <label style={lbl}>KAPSAM SEÇİN</label>
+            <select style={inp} value={scope} onChange={e=>setScope(e.target.value)}>
+              <option value="all">🌳 Tüm ağaç ({allPeople.length} kişi)</option>
+              {spousePairs.length>0&&<optgroup label="─── Eş Çiftleri ve Alt Soyu ───">
+                {spousePairs.map(s=>(
+                  <option key={s.key} value={s.key}>
+                    💑 {s.p1.name} & {s.p2.name}
+                  </option>
+                ))}
+              </optgroup>}
+              {singles.length>0&&<optgroup label="─── Tek Kişi ve Alt Soyu ───">
+                {singles.map(p=>(
+                  <option key={p.id} value={p.id}>
+                    {p.gender==="male"?"♂":"♀"} {p.name}{p.born?" ("+p.born+")":""}
+                  </option>
+                ))}
+              </optgroup>}
+            </select>
           </div>
-          {generating?<div style={{textAlign:"center",color:"#64748b",fontSize:14,fontFamily:FONT}}>🔄 Diyagram hazırlanıyor…</div>:<div style={{textAlign:"center",color:"#10b981",fontSize:14,fontFamily:FONT}}>✓ Hazır</div>}
-          <div style={{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:10,padding:"11px 14px",fontSize:13,color:"#4f46e5",lineHeight:1.6,fontFamily:FONT}}>💡 Açılan pencerede print diyaloğu başlar. <strong>"PDF Olarak Kaydet"</strong> seçin.</div>
-          <button onClick={handlePrint} disabled={generating} style={{background:generating?"#c7d2fe":"#6366f1",border:"1px solid #6366f1",borderRadius:12,color:"#ffffff",padding:"15px",fontSize:16,cursor:generating?"not-allowed":"pointer",fontWeight:700,width:"100%",fontFamily:FONT}}>{generating?"🔄 Hazırlanıyor…":"🖨️ Yazdır / PDF Kaydet"}</button>
+
+          {/* Preview info */}
+          <div style={{background:"#f8faff",borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:22}}>🌳</span>
+            <div>
+              <div style={{fontSize:14,fontWeight:700,color:"#1e293b",fontFamily:FONT}}>{tree.name}</div>
+              <div style={{fontSize:12,color:"#6366f1",fontFamily:FONT,marginTop:2}}>{scopeLabel()}</div>
+              <div style={{fontSize:11,color:"#94a3b8",fontFamily:FONT,marginTop:1}}>Yatay A4 · Geniş ağaçlar otomatik çok sayfaya bölünür</div>
+            </div>
+          </div>
+
+          {/* Status */}
+          {status&&<div style={{textAlign:"center",fontSize:13,fontFamily:FONT,color:status.startsWith("✓")?"#10b981":"#64748b"}}>{status}</div>}
+
+          <div style={{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:10,padding:"11px 14px",fontSize:13,color:"#4f46e5",lineHeight:1.6,fontFamily:FONT}}>
+            💡 Açılan pencerede print diyaloğu başlar. <strong>"PDF Olarak Kaydet"</strong> seçin.
+          </div>
+          <button onClick={handlePrint} disabled={generating}
+            style={{background:generating?"#c7d2fe":"#6366f1",border:"1px solid #6366f1",borderRadius:12,color:"#ffffff",padding:"15px",fontSize:16,cursor:generating?"not-allowed":"pointer",fontWeight:700,width:"100%",fontFamily:FONT}}>
+            {generating?"⏳ Hazırlanıyor…":"🖨️ Yazdır / PDF Kaydet"}
+          </button>
         </div>
       </div>
     </div>
