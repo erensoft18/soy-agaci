@@ -1206,7 +1206,7 @@ function buildPrintHTML(tree, tileImgs, title) {
 //   1. Group generation rows into vertical bands that fit within PAGE_H
 //   2. For each vertical band, find horizontal cut points between family groups
 //   3. Render each (vBand × hSlice) combination as one page tile
-async function buildTiledImgs(people, rels, pageWidthPx) {
+async function buildTiledImgs(people, rels, pageWidthPx, targetPages) {
   const result = buildTreeSVGString(people, rels);
   if (!result) return [null];
   const {svgString, W, H} = result;
@@ -1214,8 +1214,24 @@ async function buildTiledImgs(people, rels, pageWidthPx) {
   // A4 landscape usable area (px at 96dpi, no margin)
   // Width  ≈ 297mm → ~1122px   Height ≈ 210mm → ~793px
   // We reserve ~14px for the footer row → effective diagram height
-  const PAGE_W = pageWidthPx || 1080;
-  const PAGE_H = 720; // ~190mm usable after footer
+  let PAGE_W = pageWidthPx || 1080;
+  let PAGE_H = 720; // ~190mm usable after footer
+
+  // If targetPages specified, scale page size so tree fits in roughly that many pages.
+  // Strategy: assume grid layout, adjust PAGE_W and PAGE_H proportionally.
+  if (targetPages && targetPages > 0) {
+    // Estimate natural page count without constraint: ceil(W/PAGE_W) * ceil(H/PAGE_H)
+    // Solve for a scale factor k such that ceil(W/(PAGE_W*k)) * ceil(H/(PAGE_H*k)) ≈ targetPages
+    // For simplicity: set effective page area = (W*H) / targetPages, keep A4 aspect ratio
+    const aspect = PAGE_W / PAGE_H; // ~1.5 for A4 landscape
+    const totalArea = W * H;
+    const pageArea  = totalArea / targetPages;
+    const newH = Math.sqrt(pageArea / aspect);
+    const newW = newH * aspect;
+    // Only shrink pages (zoom out), never inflate — that would waste space
+    PAGE_W = Math.min(PAGE_W, Math.max(newW, NW * 3));
+    PAGE_H = Math.min(PAGE_H, Math.max(newH, NH * 3));
+  }
 
   // If the whole tree fits on one page — done
   if (W <= PAGE_W * 1.05 && H <= PAGE_H * 1.05) {
@@ -1580,9 +1596,41 @@ function PrintModal({tree,onClose}) {
 
   const [scope,      setScope]      = useState("all");
   const [pairSearch, setPairSearch] = useState("");
+  const [pageTarget, setPageTarget] = useState("auto");  // "auto"|"1"|"2"|"4"|"6"|"9"|"12"
+  const [pageEst,    setPageEst]    = useState(null);    // estimated page count
   const [generating, setGenerating] = useState(false);
   const [status,     setStatus]     = useState("");
   const tilesRef = useRef(null);
+
+  // Estimate page count whenever scope or pageTarget changes
+  useEffect(()=>{
+    const {subPeople, subRels} = buildSubset();
+    const r = buildTreeSVGString(subPeople, subRels);
+    if(!r){setPageEst(null);return;}
+    const {W,H} = r;
+    let PAGE_W=1080, PAGE_H=720;
+    const tgt = pageTarget==="auto" ? null : parseInt(pageTarget);
+    if(tgt && tgt>0){
+      const aspect=PAGE_W/PAGE_H, totalArea=W*H, pageArea=totalArea/tgt;
+      const newH=Math.sqrt(pageArea/aspect), newW=newH*aspect;
+      PAGE_W=Math.min(PAGE_W,Math.max(newW,NW*3));
+      PAGE_H=Math.min(PAGE_H,Math.max(newH,NH*3));
+    }
+    const {pos} = buildLayout(subPeople, subRels);
+    const rowTops=[...new Set(Object.values(pos).map(p=>Math.round(p.y-NH/2)))].sort((a,b)=>a-b);
+    let vCount=0, bandStart=rowTops[0]-30, bandEnd=bandStart;
+    for(const ry of rowTops){ const rb=ry+NH+30; if(rb-bandStart<=PAGE_H){bandEnd=rb;}else{vCount++;bandStart=ry-30;bandEnd=ry+NH+30;} }
+    vCount++;
+    const allXs=Object.values(pos).map(p=>p.x).sort((a,b)=>a-b);
+    const treeLeft=Math.min(...allXs)-NW/2-40, treeRight=Math.max(...allXs)+NW/2+40;
+    const hCuts=[treeLeft];
+    for(let i=1;i<allXs.length;i++){if(allXs[i]-allXs[i-1]>NW+30)hCuts.push((allXs[i-1]+allXs[i])/2);}
+    hCuts.push(treeRight);
+    let hCount=0, ss=hCuts[0], se=hCuts[0];
+    for(let ci=1;ci<hCuts.length;ci++){const c=hCuts[ci];if(c-ss<=PAGE_W){se=c;}else{hCount++;ss=se;se=c;}}
+    hCount++;
+    setPageEst(vCount*hCount);
+  },[scope, pageTarget]);
 
   const filteredPairs = pairSearch.trim()
     ? spousePairs.filter(s=>
@@ -1608,7 +1656,8 @@ function PrintModal({tree,onClose}) {
     try {
       const {subPeople, subRels} = buildSubset();
       const title = scope==="all" ? tree.name : scopeLabel();
-      const tiles = await buildTiledImgs(subPeople, subRels, 1020);
+      const tgt = pageTarget==="auto" ? null : parseInt(pageTarget);
+      const tiles = await buildTiledImgs(subPeople, subRels, 1020, tgt);
       tilesRef.current = {tiles, title, subPeople};
       setStatus("Yazdırma penceresi açılıyor…");
       const subTree = {...tree, people:subPeople, rels:subRels};
@@ -1689,13 +1738,39 @@ function PrintModal({tree,onClose}) {
             </>}
           </div>
 
+          {/* Page count selector */}
+          <div>
+            <label style={lbl}>SAYFA SAYISI</label>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7}}>
+              {[
+                {id:"auto", label:"Otomatik", sub:"akıllı bölme"},
+                {id:"1",    label:"1 Sayfa",  sub:"tek sayfaya sığdır"},
+                {id:"2",    label:"2 Sayfa",  sub:"2 yatay parça"},
+                {id:"4",    label:"4 Sayfa",  sub:"2×2 ızgara"},
+                {id:"6",    label:"6 Sayfa",  sub:"2×3 ızgara"},
+                {id:"9",    label:"9 Sayfa",  sub:"3×3 ızgara"},
+                {id:"12",   label:"12 Sayfa", sub:"3×4 ızgara"},
+                {id:"16",   label:"16 Sayfa", sub:"4×4 ızgara"},
+              ].map(opt=>(
+                <div key={opt.id} onClick={()=>setPageTarget(opt.id)}
+                  style={{padding:"9px 6px",borderRadius:10,border:"2px solid "+(pageTarget===opt.id?"#6366f1":"#e2e8f0"),background:pageTarget===opt.id?"#eef2ff":"#f8faff",cursor:"pointer",textAlign:"center"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:pageTarget===opt.id?"#6366f1":"#1e293b",fontFamily:FONT,lineHeight:1.2}}>{opt.label}</div>
+                  <div style={{fontSize:9,color:"#94a3b8",fontFamily:FONT,marginTop:2,lineHeight:1.2}}>{opt.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Preview info */}
           <div style={{background:"#f8faff",borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:22}}>🌳</span>
-            <div>
+            <span style={{fontSize:22}}>📄</span>
+            <div style={{flex:1}}>
               <div style={{fontSize:14,fontWeight:700,color:"#1e293b",fontFamily:FONT}}>{tree.name}</div>
               <div style={{fontSize:12,color:"#6366f1",fontFamily:FONT,marginTop:2}}>{scopeLabel()}</div>
-              <div style={{fontSize:11,color:"#94a3b8",fontFamily:FONT,marginTop:1}}>Yatay A4 · Geniş ağaçlar otomatik çok sayfaya bölünür</div>
+              <div style={{fontSize:11,color:"#94a3b8",fontFamily:FONT,marginTop:1}}>
+                Yatay A4
+                {pageEst!==null && <span style={{color:"#6366f1",fontWeight:600}}> · Tahmini <span style={{color:"#4f46e5"}}>{pageEst} sayfa</span></span>}
+              </div>
             </div>
           </div>
 
