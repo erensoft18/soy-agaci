@@ -964,111 +964,109 @@ function TreeEditor({tree,onSave,onBack}) {
           </div>
         )}
 
-        {/* ── Kişiler ── */}
+        {/* ── Kişiler Grid ── */}
         {tab==="kişiler"&&(
           <div style={{flex:1,overflow:"auto",padding:14}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <span style={{fontSize:14,color:"#64748b",fontWeight:600}}>👥 KİŞİLER ({people.length})</span>
               <button onClick={openAddPerson} style={btn(true,true)}>+ Yeni Kişi</button>
             </div>
-            <div style={{position:"relative",marginBottom:10}}>
+            <div style={{position:"relative",marginBottom:12}}>
               <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#94a3b8",fontSize:15,pointerEvents:"none"}}>🔍</span>
-              <input
-                value={peopleSearch} onChange={e=>setPeopleSearch(e.target.value)}
-                placeholder="İsme göre ara…"
-                style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"9px 12px 9px 34px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT}}
-              />
+              <input value={peopleSearch} onChange={e=>setPeopleSearch(e.target.value)} placeholder="İsme göre ara…"
+                style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"9px 12px 9px 34px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT}}/>
               {peopleSearch&&<button onClick={()=>setPeopleSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:16,lineHeight:1}}>✕</button>}
             </div>
-            {filteredPeople.length===0&&peopleSearch&&<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{peopleSearch}" için sonuç yok</div>}
-            <div style={{fontSize:12,color:"#94a3b8",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
-              <span>⠿</span> Sürükle-bırak ile sırala
-            </div>
-            <DragList
-              items={filteredPeople}
-              onReorder={filtered=>{
-                // Merge filtered reorder back into full list preserving non-filtered order
-                if(!peopleSearch.trim()){ setPeople(filtered); return; }
-                const filteredIds=filtered.map(p=>p.id);
-                const rest=people.filter(p=>!filteredIds.includes(p.id));
-                // Re-insert filtered at their original positions
-                const newList=[...people];
-                let fi=0;
-                newList.forEach((_,i)=>{ if(filteredIds.includes(newList[i].id)){ newList[i]=filtered[fi++]; } });
-                setPeople(newList);
-              }}
-              renderItem={(p)=>(
-                <div style={{background:"#ffffff",border:"1px solid "+(selId===p.id?"#6366f1":"#e2e8f0"),borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",boxShadow:"0 1px 4px rgba(99,102,241,0.05)"}} onClick={()=>setSelId(p.id===selId?null:p.id)}>
-                  <span style={{color:"#d1d9f0",fontSize:18,cursor:"grab",flexShrink:0}}>⠿</span>
-                  <div style={{width:40,height:40,borderRadius:"50%",flexShrink:0,overflow:"hidden",border:"2px solid "+(p.gender==="male"?C.male:C.female),background:(p.gender==="male"?"#dbeafe":"#fce7f3"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>
-                    {p.photo?<img src={p.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(p.gender==="male"?"♂":"♀")}
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                      {p.name}{p.died&&<span style={{color:"#94a3b8",marginLeft:6,fontSize:12}}>✝</span>}
-                      {(()=>{ const hp=new Set(rels.filter(r=>r.type==="parent").map(r=>r.p2)); const hs=new Set([...rels.filter(r=>r.type==="spouse").map(r=>r.p1),...rels.filter(r=>r.type==="spouse").map(r=>r.p2)]); return hs.has(p.id)&&!hp.has(p.id)?<span style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:4,fontSize:10,color:"#92400e",padding:"1px 5px",marginLeft:6,fontWeight:500}}>dışarıdan</span>:null; })()}
+            {filteredPeople.length===0&&peopleSearch
+              ?<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{peopleSearch}" için sonuç yok</div>
+              :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:10}}>
+                {filteredPeople.map(p=>{
+                  const isOutsider=(()=>{ const hp=new Set(rels.filter(r=>r.type==="parent").map(r=>r.p2)); const hs=new Set([...rels.filter(r=>r.type==="spouse").map(r=>r.p1),...rels.filter(r=>r.type==="spouse").map(r=>r.p2)]); return hs.has(p.id)&&!hp.has(p.id); })();
+                  const gCol=p.gender==="male"?C.male:C.female;
+                  const gBg=p.gender==="male"?"#dbeafe":"#fce7f3";
+                  return (
+                    <div key={p.id} onClick={()=>setSelId(p.id===selId?null:p.id)}
+                      style={{background:"#ffffff",border:"2px solid "+(selId===p.id?"#6366f1":gCol),borderRadius:14,padding:"14px 10px 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:8,cursor:"pointer",boxShadow:selId===p.id?"0 0 0 3px #c7d2fe":"0 2px 6px rgba(99,102,241,0.07)",position:"relative",transition:"box-shadow 0.15s"}}>
+                      {/* Gender/outsider badge */}
+                      <div style={{position:"absolute",top:7,left:8,background:isOutsider?"#fef3c7":gBg,border:"1px solid "+(isOutsider?"#fcd34d":gCol),borderRadius:4,fontSize:9,color:isOutsider?"#92400e":gCol,padding:"1px 5px",fontWeight:600,fontFamily:FONT}}>
+                        {isOutsider?"dışarıdan":p.gender==="male"?"♂ Erkek":"♀ Kadın"}
+                      </div>
+                      {/* Photo / avatar */}
+                      <div style={{width:60,height:60,borderRadius:"50%",overflow:"hidden",border:"2.5px solid "+gCol,background:gBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,marginTop:8,flexShrink:0}}>
+                        {p.photo?<img src={p.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(p.gender==="male"?"♂":"♀")}
+                      </div>
+                      {/* Name */}
+                      <div style={{fontSize:13,fontWeight:700,textAlign:"center",color:"#1e293b",lineHeight:1.3,wordBreak:"break-word"}}>
+                        {p.name}{p.died&&<span style={{color:"#94a3b8",fontSize:11}}> ✝</span>}
+                      </div>
+                      {/* Years */}
+                      <div style={{fontSize:11,color:"#64748b",textAlign:"center"}}>{p.born||"?"}{p.died?" – "+p.died:""}</div>
+                      {/* Actions */}
+                      <div style={{display:"flex",gap:6,marginTop:2}} onClick={e=>e.stopPropagation()}>
+                        <button onClick={()=>openEditPerson(p)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>✏️</button>
+                        <button onClick={()=>setConfirmPerson(p.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>🗑</button>
+                      </div>
                     </div>
-                    <div style={{fontSize:12,color:"#64748b",marginTop:1}}>{p.born||"?"}{p.died?" – "+p.died:""}</div>
-                  </div>
-                  <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
-                    <button onClick={()=>openEditPerson(p)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:8,color:"#6366f1",padding:"6px 10px",fontSize:14,cursor:"pointer"}}>✏️</button>
-                    <button onClick={()=>setConfirmPerson(p.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,color:"#ef4444",padding:"6px 10px",fontSize:14,cursor:"pointer"}}>🗑</button>
-                  </div>
-                </div>
-              )}
-            />
+                  );
+                })}
+              </div>
+            }
           </div>
         )}
 
-        {/* ── İlişkiler ── */}
+        {/* ── İlişkiler Grid ── */}
         {tab==="ilişkiler"&&(
           <div style={{flex:1,overflow:"auto",padding:14}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <span style={{fontSize:14,color:"#64748b",fontWeight:600}}>🔗 İLİŞKİLER ({rels.length})</span>
               <button onClick={openAddRel} style={btn(true,true)}>+ Yeni İlişki</button>
             </div>
-            <div style={{position:"relative",marginBottom:10}}>
+            <div style={{position:"relative",marginBottom:12}}>
               <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:"#94a3b8",fontSize:15,pointerEvents:"none"}}>🔍</span>
-              <input
-                value={relsSearch} onChange={e=>setRelsSearch(e.target.value)}
-                placeholder="İsim veya ilişki türü ara…"
-                style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"9px 12px 9px 34px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT}}
-              />
+              <input value={relsSearch} onChange={e=>setRelsSearch(e.target.value)} placeholder="İsim veya ilişki türü ara…"
+                style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"9px 12px 9px 34px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT}}/>
               {relsSearch&&<button onClick={()=>setRelsSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:16,lineHeight:1}}>✕</button>}
             </div>
-            {filteredRels.length===0&&relsSearch&&<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{relsSearch}" için sonuç yok</div>}
-            <div style={{fontSize:12,color:"#94a3b8",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
-              <span>⠿</span> Sürükle-bırak ile sırala
-            </div>
-            <DragList
-              items={filteredRels}
-              onReorder={filtered=>{
-                if(!relsSearch.trim()){ setRels(filtered); return; }
-                const filteredIds=filtered.map(r=>r.id);
-                const newList=[...rels];
-                let fi=0;
-                newList.forEach((_,i)=>{ if(filteredIds.includes(newList[i].id)){ newList[i]=filtered[fi++]; } });
-                setRels(newList);
-              }}
-              renderItem={(r)=>{ const d=RMAP[r.type]||{}; return(
-                <div style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 1px 4px rgba(99,102,241,0.05)"}}>
-                  <span style={{color:"#d1d9f0",fontSize:18,cursor:"grab",flexShrink:0}}>⠿</span>
-                  <span style={{fontSize:20,flexShrink:0}}>{d.icon||"🔗"}</span>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                      {optLabel(people.find(p=>p.id===r.p1)||{name:"?",gender:"male"})}
-                      {" "}<span style={{color:d.color||"#6366f1",fontSize:12}}>{d.bi?"↔":"→"}</span>{" "}
-                      {optLabel(people.find(p=>p.id===r.p2)||{name:"?",gender:"male"})}
+            {filteredRels.length===0&&relsSearch
+              ?<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{relsSearch}" için sonuç yok</div>
+              :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:10}}>
+                {filteredRels.map(r=>{ const d=RMAP[r.type]||{}; const p1=people.find(p=>p.id===r.p1); const p2=people.find(p=>p.id===r.p2); return(
+                  <div key={r.id} style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:14,padding:"12px 12px 10px",display:"flex",flexDirection:"column",gap:8,boxShadow:"0 2px 6px rgba(99,102,241,0.06)"}}>
+                    {/* Type badge */}
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:18}}>{d.icon||"🔗"}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:d.color||"#6366f1",background:(d.color||"#6366f1")+"15",padding:"2px 8px",borderRadius:6,fontFamily:FONT}}>{d.label||r.type}</span>
                     </div>
-                    <div style={{fontSize:12,color:d.color||"#64748b",marginTop:2,fontWeight:500}}>{d.label||r.type}</div>
+                    {/* People row */}
+                    <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:"#f8faff",borderRadius:10}}>
+                      {/* Person 1 */}
+                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1,minWidth:0}}>
+                        <div style={{width:34,height:34,borderRadius:"50%",overflow:"hidden",border:"2px solid "+(p1?.gender==="male"?C.male:C.female),background:p1?.gender==="male"?"#dbeafe":"#fce7f3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,marginBottom:3}}>
+                          {p1?.photo?<img src={p1.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(p1?.gender==="male"?"♂":"♀")}
+                        </div>
+                        <div style={{fontSize:11,fontWeight:600,color:"#1e293b",textAlign:"center",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{p1?.name||"?"}</div>
+                        {p1?.born&&<div style={{fontSize:10,color:"#94a3b8"}}>{p1.born}{p1.died?" ✝":""}</div>}
+                      </div>
+                      {/* Arrow */}
+                      <div style={{fontSize:16,color:d.color||"#6366f1",fontWeight:700,flexShrink:0}}>{d.bi?"↔":"→"}</div>
+                      {/* Person 2 */}
+                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1,minWidth:0}}>
+                        <div style={{width:34,height:34,borderRadius:"50%",overflow:"hidden",border:"2px solid "+(p2?.gender==="male"?C.male:C.female),background:p2?.gender==="male"?"#dbeafe":"#fce7f3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,marginBottom:3}}>
+                          {p2?.photo?<img src={p2.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(p2?.gender==="male"?"♂":"♀")}
+                        </div>
+                        <div style={{fontSize:11,fontWeight:600,color:"#1e293b",textAlign:"center",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{p2?.name||"?"}</div>
+                        {p2?.born&&<div style={{fontSize:10,color:"#94a3b8"}}>{p2.born}{p2.died?" ✝":""}</div>}
+                      </div>
+                    </div>
+                    {/* Actions */}
+                    <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                      <button onClick={()=>openEditRel(r)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>✏️ Düzenle</button>
+                      <button onClick={()=>setConfirmRel(r.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>🗑</button>
+                    </div>
                   </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <button onClick={()=>openEditRel(r)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:8,color:"#6366f1",padding:"6px 10px",fontSize:14,cursor:"pointer"}}>✏️</button>
-                    <button onClick={()=>setConfirmRel(r.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,color:"#ef4444",padding:"6px 10px",fontSize:14,cursor:"pointer"}}>🗑</button>
-                  </div>
-                </div>
-              ); }}
-            />
+                ); })}
+              </div>
+            }
           </div>
         )}
       </div>
