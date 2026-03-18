@@ -1092,6 +1092,37 @@ async function svgToDataUrl(svgString, maxScale=2) {
   return new Promise((res,rej)=>{ const blob=new Blob([svgString],{type:"image/svg+xml"}); const url=URL.createObjectURL(blob); const img=new Image(); img.onload=()=>{ const scale=Math.min(2400/img.naturalWidth,1600/img.naturalHeight,maxScale); const canvas=document.createElement("canvas"); canvas.width=img.naturalWidth*scale; canvas.height=img.naturalHeight*scale; const ctx=canvas.getContext("2d"); ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.scale(scale,scale); ctx.drawImage(img,0,0); URL.revokeObjectURL(url); res(canvas.toDataURL("image/png")); }; img.onerror=rej; img.src=url; });
 }
 
+// Render SVG into a fixed page canvas (A4 landscape) keeping aspect ratio — no distortion.
+// White background fills any letterbox space so the image always fills the page exactly.
+async function svgToPageDataUrl(svgString, pageW, pageH) {
+  return new Promise((res, rej) => {
+    const blob = new Blob([svgString], {type: 'image/svg+xml'});
+    const url  = URL.createObjectURL(blob);
+    const img  = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = pageW;
+      canvas.height = pageH;
+      const ctx = canvas.getContext('2d');
+      // White background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, pageW, pageH);
+      // Scale to fit, keeping aspect ratio (contain)
+      const scale = Math.min(pageW / img.naturalWidth, pageH / img.naturalHeight);
+      const dw = img.naturalWidth  * scale;
+      const dh = img.naturalHeight * scale;
+      const dx = (pageW - dw) / 2;
+      const dy = (pageH - dh) / 2;
+      ctx.drawImage(img, dx, dy, dw, dh);
+      URL.revokeObjectURL(url);
+      res(canvas.toDataURL('image/png'));
+    };
+    img.onerror = rej;
+    img.src = url;
+  });
+}
+
+
 // High-resolution PNG export — full tree on one canvas, no page splitting
 async function buildExportPng(people, rels, scaleFactor) {
   const result = buildTreeSVGString(people, rels);
@@ -1158,8 +1189,9 @@ function buildPrintHTML(tree, tileImgs, title) {
     '.diagram img {',
     '  width: 100%;',
     '  height: 100%;',
-    '  object-fit: fill;',
+    '  object-fit: contain;',
     '  display: block;',
+    '  background: white;',
     '}',
     '.footer {',
     '  position: absolute;',
@@ -1252,7 +1284,9 @@ async function buildTiledImgs(people, rels, pageWidthPx, targetPages) {
   // One vertical band = full tree height (no vertical splitting)
   const vBands = [{y0: treeTop, y1: treeBottom}];
 
-  // Render tiles — each tile stretches to fill its slice exactly
+  // Render tiles — each tile is rendered onto a full A4 landscape canvas (aspect-correct)
+  const PAGE_PX_W = 1754; // 297mm @ 150dpi
+  const PAGE_PX_H = 1240; // 210mm @ 150dpi
   const results = [];
   for (const vb of vBands) {
     const bH = vb.y1 - vb.y0;
@@ -1268,8 +1302,10 @@ async function buildTiledImgs(people, rels, pageWidthPx, targetPages) {
         .replace(/viewBox="[^"]*"/, `viewBox="${hs.x0} ${vb.y0} ${bW} ${bH}"`)
         .replace(/width="[^"]*"/,   `width="${bW}"`)
         .replace(/height="[^"]*"/,  `height="${bH}"`);
-      const dataUrl = await svgToDataUrl(tileSvg);
-      results.push({dataUrl, w:bW, h:bH});
+      // Reserve bottom strip for footer (~5% of page height)
+      const footerH = Math.round(PAGE_PX_H * 0.05);
+      const dataUrl = await svgToPageDataUrl(tileSvg, PAGE_PX_W, PAGE_PX_H - footerH);
+      results.push({dataUrl, w:PAGE_PX_W, h:PAGE_PX_H - footerH});
     }
   }
   return results.length ? results : [null];
