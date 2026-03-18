@@ -1137,23 +1137,23 @@ function buildPrintHTML(tree, tileImgs, title) {
     ].join('\n');
   });
 
+  const footerH = '8mm';
   const css = [
     '* { box-sizing:border-box; margin:0; padding:0; font-family:sans-serif; }',
-    'html, body { height:100%; background:white; }',
+    'html, body { width:100%; height:100%; background:white; }',
     '.page {',
-    '  display: flex;',
-    '  flex-direction: column;',
-    '  height: 100vh;',
+    '  position: relative;',
     '  width: 100%;',
+    '  height: 100vh;',
     '  page-break-after: always;',
     '  break-after: page;',
     '  overflow: hidden;',
     '}',
     '.page:last-child { page-break-after:avoid; break-after:avoid; }',
     '.diagram {',
-    '  flex: 1;',
-    '  min-height: 0;',
-    '  overflow: hidden;',
+    '  position: absolute;',
+    '  top: 0; left: 0; right: 0;',
+    '  bottom: ' + footerH + ';',
     '}',
     '.diagram img {',
     '  width: 100%;',
@@ -1162,18 +1162,22 @@ function buildPrintHTML(tree, tileImgs, title) {
     '  display: block;',
     '}',
     '.footer {',
-    '  flex-shrink: 0;',
-    '  text-align: center;',
-    '  padding: 2mm 8mm 3mm 8mm;',
+    '  position: absolute;',
+    '  bottom: 0; left: 0; right: 0;',
+    '  height: ' + footerH + ';',
+    '  display: flex;',
+    '  align-items: center;',
+    '  justify-content: center;',
     '  border-top: 1pt solid #c7d2fe;',
-    '  font-size: 9pt;',
+    '  font-size: 8pt;',
     '  color: #475569;',
     '  font-weight: 600;',
     '  letter-spacing: 0.03em;',
+    '  background: white;',
     '}',
     '@media print {',
     '  @page { margin: 0; size: A4 landscape; }',
-    '  html, body { height: 100%; }',
+    '  html, body { width:100%; height:100%; }',
     '}',
   ].join('\n');
 
@@ -1678,17 +1682,13 @@ function PrintModal({tree,onClose}) {
             <label style={lbl}>SAYFA SAYISI</label>
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
               {[
-                {id:"auto", label:"Otomatik",      sub:"Akıllı bölme — aile gruplarına göre"},
-                {id:"1",    label:"1 Sayfa  (1×1)", sub:"Tüm ağaç tek sayfaya sığdırılır"},
-                {id:"2",    label:"2 Sayfa  (1×2)", sub:"Ağaç 2 yatay dilime bölünür"},
-                {id:"3",    label:"3 Sayfa  (1×3)", sub:"Ağaç 3 yatay dilime bölünür"},
-                {id:"4",    label:"4 Sayfa  (1×4)", sub:"Ağaç 4 yatay dilime bölünür"},
-                {id:"5",    label:"5 Sayfa  (1×5)", sub:"Ağaç 5 yatay dilime bölünür"},
+                {id:"auto", label:"Otomatik", sub:"Akıllı bölme — aile gruplarına göre"},
+                {id:"1",    label:"1 Sayfa",  sub:"Tüm ağaç tek sayfaya sığdırılır"},
               ].map(opt=>(
                 <div key={opt.id} onClick={()=>setPageTarget(opt.id)}
-                  style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:10,border:"2px solid "+(pageTarget===opt.id?"#6366f1":"#e2e8f0"),background:pageTarget===opt.id?"#eef2ff":"#f8faff",cursor:"pointer"}}>
+                  style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:10,border:"2px solid "+(pageTarget===opt.id?"#6366f1":"#e2e8f0"),background:pageTarget===opt.id?"#eef2ff":"#f8faff",cursor:"pointer"}}>
                   <div style={{width:28,height:28,borderRadius:8,background:pageTarget===opt.id?"#6366f1":"#e2e8f0",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:12,fontWeight:700,color:pageTarget===opt.id?"#fff":"#64748b",fontFamily:FONT}}>{opt.id==="auto"?"A":opt.id}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:pageTarget===opt.id?"#fff":"#64748b",fontFamily:FONT}}>{opt.id==="auto"?"A":"1"}</span>
                   </div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:13,fontWeight:700,color:pageTarget===opt.id?"#6366f1":"#1e293b",fontFamily:FONT}}>{opt.label}</div>
