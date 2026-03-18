@@ -1097,7 +1097,7 @@ async function buildTiledImgs(people, rels, pageWidthPx) {
 function PrintModal({tree,onClose}) {
   const allPeople = tree.people||[], allRels = tree.rels||[];
 
-  // Find all spouse pairs (for root selection)
+  // Spouse pairs only
   const spousePairs = [];
   const seenPairs   = new Set();
   allRels.filter(r=>r.type==="spouse").forEach(r=>{
@@ -1106,28 +1106,30 @@ function PrintModal({tree,onClose}) {
     const p1=allPeople.find(p=>p.id===r.p1), p2=allPeople.find(p=>p.id===r.p2);
     if(p1&&p2) spousePairs.push({key, p1, p2});
   });
-  // Also add single people not in any pair
-  const pairedIds = new Set(spousePairs.flatMap(s=>[s.p1.id,s.p2.id]));
-  const singles   = allPeople.filter(p=>!pairedIds.has(p.id));
 
-  const [scope,   setScope]   = useState("all"); // "all" | pair key | person id
-  const [generating,setGenerating] = useState(false);
-  const [status,  setStatus]  = useState("");
+  const [scope,      setScope]      = useState("all");
+  const [pairSearch, setPairSearch] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [status,     setStatus]     = useState("");
   const tilesRef = useRef(null);
+
+  const filteredPairs = pairSearch.trim()
+    ? spousePairs.filter(s=>
+        (s.p1.name+s.p2.name).toLowerCase().includes(pairSearch.toLowerCase())
+      )
+    : spousePairs;
 
   const scopeLabel = ()=>{
     if(scope==="all") return "Tüm ağaç ("+allPeople.length+" kişi)";
     const pair=spousePairs.find(s=>s.key===scope);
-    if(pair) return pair.p1.name+" & "+pair.p2.name+" alt soyu";
-    const p=allPeople.find(x=>x.id===scope);
-    return p?(p.name+" alt soyu"):"?";
+    return pair ? pair.p1.name+" & "+pair.p2.name+" alt soyu" : "?";
   };
 
   const buildSubset = ()=>{
     if(scope==="all") return {subPeople:allPeople, subRels:allRels};
     const pair=spousePairs.find(s=>s.key===scope);
-    const rootIds = pair ? [pair.p1.id, pair.p2.id] : [scope];
-    return collectSubtree(rootIds, allPeople, allRels);
+    if(!pair) return {subPeople:allPeople, subRels:allRels};
+    return collectSubtree([pair.p1.id, pair.p2.id], allPeople, allRels);
   };
 
   const handlePrint = async ()=>{
@@ -1164,23 +1166,55 @@ function PrintModal({tree,onClose}) {
           {/* Scope selector */}
           <div>
             <label style={lbl}>KAPSAM SEÇİN</label>
-            <select style={inp} value={scope} onChange={e=>setScope(e.target.value)}>
-              <option value="all">🌳 Tüm ağaç ({allPeople.length} kişi)</option>
-              {spousePairs.length>0&&<optgroup label="─── Eş Çiftleri ve Alt Soyu ───">
-                {spousePairs.map(s=>(
-                  <option key={s.key} value={s.key}>
-                    💑 {s.p1.name} & {s.p2.name}
-                  </option>
-                ))}
-              </optgroup>}
-              {singles.length>0&&<optgroup label="─── Tek Kişi ve Alt Soyu ───">
-                {singles.map(p=>(
-                  <option key={p.id} value={p.id}>
-                    {p.gender==="male"?"♂":"♀"} {p.name}{p.born?" ("+p.born+")":""}
-                  </option>
-                ))}
-              </optgroup>}
-            </select>
+            {/* "Tüm ağaç" button */}
+            <div
+              onClick={()=>setScope("all")}
+              style={{display:"flex",alignItems:"center",gap:10,padding:"10px 13px",borderRadius:10,border:"2px solid "+(scope==="all"?"#6366f1":"#e2e8f0"),background:scope==="all"?"#eef2ff":"#f8faff",cursor:"pointer",marginBottom:10}}>
+              <span style={{fontSize:18}}>🌳</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:700,color:scope==="all"?"#6366f1":"#1e293b",fontFamily:FONT}}>Tüm Ağaç</div>
+                <div style={{fontSize:11,color:"#64748b",fontFamily:FONT}}>{allPeople.length} kişi</div>
+              </div>
+              {scope==="all"&&<span style={{color:"#6366f1",fontSize:18}}>✓</span>}
+            </div>
+            {/* Spouse pair search + list */}
+            {spousePairs.length>0&&<>
+              <label style={{...lbl,marginTop:4}}>EŞ ÇİFTİ SEÇİN (ALT SOY)</label>
+              <div style={{position:"relative",marginBottom:8}}>
+                <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#94a3b8",fontSize:14,pointerEvents:"none"}}>🔍</span>
+                <input
+                  value={pairSearch} onChange={e=>setPairSearch(e.target.value)}
+                  placeholder="İsim ile ara…"
+                  style={{...inp,paddingLeft:32}}/>
+                {pairSearch&&<button onClick={()=>setPairSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:15}}>✕</button>}
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:220,overflow:"auto"}}>
+                {filteredPairs.map(s=>{
+                  const sel=scope===s.key;
+                  return(
+                    <div key={s.key} onClick={()=>setScope(s.key)}
+                      style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,border:"2px solid "+(sel?"#6366f1":"#e2e8f0"),background:sel?"#eef2ff":"#f8faff",cursor:"pointer"}}>
+                      <div style={{display:"flex",gap:4}}>
+                        {[s.p1,s.p2].map(px=>(
+                          <div key={px.id} style={{width:32,height:32,borderRadius:"50%",overflow:"hidden",border:"2px solid "+(px.gender==="male"?C.male:C.female),background:px.gender==="male"?"#dbeafe":"#fce7f3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>
+                            {px.photo?<img src={px.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(px.gender==="male"?"♂":"♀")}
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:sel?"#6366f1":"#1e293b",fontFamily:FONT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {s.p1.name} & {s.p2.name}
+                        </div>
+                        <div style={{fontSize:11,color:"#64748b",fontFamily:FONT}}>Alt soy ağacı</div>
+                      </div>
+                      {sel&&<span style={{color:"#6366f1",fontSize:18}}>✓</span>}
+                    </div>
+                  );
+                })}
+                {filteredPairs.length===0&&pairSearch&&
+                  <div style={{textAlign:"center",color:"#94a3b8",fontSize:13,padding:"12px 0",fontFamily:FONT}}>Sonuç bulunamadı</div>}
+              </div>
+            </>}
           </div>
 
           {/* Preview info */}
