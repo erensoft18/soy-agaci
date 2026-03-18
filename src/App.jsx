@@ -1102,7 +1102,7 @@ function buildPrintHTML(tree, tileImgs, title) {
       ? '<img src="' + tile.dataUrl + '" alt=""/>'
       : '<p style="text-align:center;color:#999;padding:40px 0">Diyagram oluşturulamadı</p>';
     const pageInfo = displayTitle + ' &middot; Soy A&#287;ac&#305; &middot; ' + today + ' &middot; ' + people.length + ' ki&#351;i'
-      + (tileImgs.length > 1 ? ' &middot; ' + (i+1) + '/' + tileImgs.length : '');
+      + (tileImgs.length > 1 ? ' &middot; Sayfa ' + (i+1) + ' / ' + tileImgs.length : '');
     return [
       '<div class="page">',
       '  <div class="diagram">' + imgHtml + '</div>',
@@ -1175,91 +1175,117 @@ function buildPrintHTML(tree, tileImgs, title) {
   ].join('\n');
 }
 
-// Split SVG into page-width tiles
+// Split SVG into page tiles — supports both wide AND tall trees
+// Strategy:
+//   1. Group generation rows into vertical bands that fit within PAGE_H
+//   2. For each vertical band, find horizontal cut points between family groups
+//   3. Render each (vBand × hSlice) combination as one page tile
 async function buildTiledImgs(people, rels, pageWidthPx) {
   const result = buildTreeSVGString(people, rels);
   if (!result) return [null];
   const {svgString, W, H} = result;
 
-  // A4 landscape usable width ~270mm @ 96dpi ≈ 1020px
-  const TILE_W = pageWidthPx || 1020;
+  // A4 landscape usable area (px at 96dpi, no margin)
+  // Width  ≈ 297mm → ~1122px   Height ≈ 210mm → ~793px
+  // We reserve ~14px for the footer row → effective diagram height
+  const PAGE_W = pageWidthPx || 1080;
+  const PAGE_H = 720; // ~190mm usable after footer
 
-  // If fits on one page — single tile
-  if (W <= TILE_W * 1.05) {
+  // If the whole tree fits on one page — done
+  if (W <= PAGE_W * 1.05 && H <= PAGE_H * 1.05) {
     const dataUrl = await svgToDataUrl(svgString);
     return [{dataUrl, w:W, h:H}];
   }
 
-  // Split by generation rows (ranks) so no family row is cut mid-page.
-  // Collect unique Y positions (one per rank row)
   const {pos} = buildLayout(people, rels);
-  const rowYs = [...new Set(Object.values(pos).map(p => Math.round(p.y - NH/2)))].sort((a,b)=>a-b);
 
-  // Group rows into pages: add rows until page would exceed TILE_W
-  // (we measure X span of people in each row)
-  const rowXSpan = {}; // rowY → {minX, maxX}
-  Object.values(pos).forEach(pt => {
-    const ry = Math.round(pt.y - NH/2);
-    if (!rowXSpan[ry]) rowXSpan[ry] = {minX: pt.x-NW/2, maxX: pt.x+NW/2};
-    else {
-      rowXSpan[ry].minX = Math.min(rowXSpan[ry].minX, pt.x-NW/2);
-      rowXSpan[ry].maxX = Math.max(rowXSpan[ry].maxX, pt.x+NW/2);
-    }
-  });
+  // ── 1. Vertical bands: group ranks so each band height <= PAGE_H ──────────
+  // Collect unique top-Y of each rank row
+  const rowTops = [...new Set(Object.values(pos).map(p => Math.round(p.y - NH/2)))]
+    .sort((a,b) => a - b);
 
-  // Build pages: each page is a horizontal slice [vx1, vx2]
-  // Strategy: greedily pack full-width columns, but cut only between rank columns
-  // Simpler & more reliable: split by X ranges that contain complete family units
-  // Find natural cut points — gaps between family groups
-  const allXs = Object.values(pos).map(p=>p.x).sort((a,b)=>a-b);
-  // Find gaps > NW between consecutive nodes (these are safe cut points)
-  const cutPoints = [Math.min(...allXs)-NW/2-40];
-  for (let i=1; i<allXs.length; i++) {
-    if (allXs[i] - allXs[i-1] > NW + 40) {
-      cutPoints.push((allXs[i-1]+allXs[i])/2);
-    }
-  }
-  cutPoints.push(Math.max(...allXs)+NW/2+40);
+  const vBands = []; // [{y0, y1}]
+  let bandStart = rowTops[0] - 30;
+  let bandEnd   = bandStart;
 
-  // Build tiles from cut points, ensuring each tile <= TILE_W
-  const tiles = [];
-  let tileStart = cutPoints[0];
-  let tileEnd   = cutPoints[0];
-
-  for (let ci=1; ci<cutPoints.length; ci++) {
-    const candidate = cutPoints[ci];
-    if (candidate - tileStart <= TILE_W) {
-      tileEnd = candidate; // keep extending
+  for (const ry of rowTops) {
+    const rowBottom = ry + NH + 30;
+    if (rowBottom - bandStart <= PAGE_H) {
+      bandEnd = rowBottom;
     } else {
-      // Flush current tile
-      if (tileEnd > tileStart) {
-        tiles.push({vx: tileStart, vw: tileEnd - tileStart});
-      }
-      tileStart = tileEnd;
-      tileEnd   = candidate;
+      vBands.push({y0: bandStart, y1: bandEnd});
+      bandStart = ry - 30;
+      bandEnd   = ry + NH + 30;
     }
   }
-  // Flush last tile
-  if (tileEnd > tileStart) {
-    tiles.push({vx: tileStart, vw: tileEnd - tileStart});
+  vBands.push({y0: bandStart, y1: bandEnd}); // flush last band
+
+  // ── 2. Horizontal slices: find safe cut points between family groups ───────
+  const allXs = Object.values(pos).map(p => p.x).sort((a,b) => a - b);
+  const treeLeft  = Math.min(...allXs) - NW/2 - 40;
+  const treeRight = Math.max(...allXs) + NW/2 + 40;
+
+  // Natural gaps between nodes (safe to cut here)
+  const hCuts = [treeLeft];
+  for (let i = 1; i < allXs.length; i++) {
+    if (allXs[i] - allXs[i-1] > NW + 30) {
+      hCuts.push((allXs[i-1] + allXs[i]) / 2);
+    }
   }
-  // Fallback: if no natural cuts found just do equal splits
-  if (tiles.length === 0) {
-    const n = Math.ceil(W / TILE_W);
-    for (let i=0; i<n; i++) tiles.push({vx: i*TILE_W, vw: Math.min(TILE_W, W-i*TILE_W)});
+  hCuts.push(treeRight);
+
+  // Build horizontal slices respecting PAGE_W
+  const hSlices = []; // [{x0, x1}]
+  let sliceStart = hCuts[0];
+  let sliceEnd   = hCuts[0];
+  for (let ci = 1; ci < hCuts.length; ci++) {
+    const c = hCuts[ci];
+    if (c - sliceStart <= PAGE_W) {
+      sliceEnd = c;
+    } else {
+      hSlices.push({x0: sliceStart, x1: sliceEnd});
+      sliceStart = sliceEnd;
+      sliceEnd   = c;
+    }
   }
-  // Render each tile — skip truly empty ones
+  hSlices.push({x0: sliceStart, x1: sliceEnd});
+
+  // Fallback: no natural cuts found → equal splits
+  if (hSlices.length === 0 || (hSlices.length === 1 && hSlices[0].x1 - hSlices[0].x0 > PAGE_W * 1.1)) {
+    hSlices.length = 0;
+    const n = Math.ceil((treeRight - treeLeft) / PAGE_W);
+    for (let i = 0; i < n; i++) {
+      hSlices.push({x0: treeLeft + i * PAGE_W, x1: Math.min(treeLeft + (i+1) * PAGE_W, treeRight)});
+    }
+  }
+
+  // ── 3. Render each tile ────────────────────────────────────────────────────
   const results = [];
-  for (const t of tiles) {
-    if (t.vw < NW) continue; // skip slivers
-    const tileSvg = svgString
-      .replace(/viewBox="[^"]*"/, 'viewBox="'+t.vx+' 0 '+t.vw+' '+H+'"')
-      .replace(/width="[^"]*"/,   'width="'+t.vw+'"');
-    const dataUrl = await svgToDataUrl(tileSvg);
-    results.push({dataUrl, w:t.vw, h:H});
+  for (const vb of vBands) {
+    const bH = vb.y1 - vb.y0;
+    for (const hs of hSlices) {
+      const bW = hs.x1 - hs.x0;
+      if (bW < NW || bH < NH/2) continue; // skip slivers
+
+      // Check if any node falls in this tile
+      const hasContent = Object.values(pos).some(p =>
+        p.x >= hs.x0 && p.x <= hs.x1 &&
+        (p.y - NH/2) >= vb.y0 && (p.y + NH/2) <= vb.y1 + NH
+      );
+      if (!hasContent) continue;
+
+      const tileSvg = svgString
+        .replace(/viewBox="[^"]*"/, `viewBox="${hs.x0} ${vb.y0} ${bW} ${bH}"`)
+        .replace(/width="[^"]*"/,   `width="${bW}"`)
+        .replace(/height="[^"]*"/,  `height="${bH}"`);
+
+      const dataUrl = await svgToDataUrl(tileSvg);
+      results.push({dataUrl, w: bW, h: bH});
+    }
   }
   return results.length ? results : [null];
 }
+
 function PrintModal({tree,onClose}) {
   const allPeople = tree.people||[], allRels = tree.rels||[];
 
