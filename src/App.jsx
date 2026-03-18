@@ -12,11 +12,8 @@ const NW=130, NH=180, MIN_GAP=20, VGAP=110;
 const FONT = "'Poppins',sans-serif";
 
 const REL_DEFS = [
-  { value:"spouse",      label:"Eşler",                         icon:"💍", color:"#f59e0b", bi:true  },
-  { value:"parent",      label:"Ebeveyn → Çocuk",               icon:"👨‍👧", color:"#6366f1", bi:false, autoSpouse:true },
-  { value:"sibling",     label:"Kardeş",                        icon:"🤝", color:"#10b981", bi:true  },
-  { value:"grandparent", label:"Büyükanne/baba → Torun",        icon:"👴", color:"#f97316", bi:false },
-  { value:"uncle",       label:"Amca/Dayı/Hala/Teyze → Yeğen", icon:"🧑", color:"#0ea5e9", bi:false },
+  { value:"spouse", label:"Eşler",           icon:"💍", color:"#f59e0b", bi:true  },
+  { value:"parent", label:"Ebeveyn → Çocuk", icon:"👨‍👧", color:"#6366f1", bi:false, autoSpouse:true },
 ];
 const RMAP       = Object.fromEntries(REL_DEFS.map(r=>[r.value,r]));
 const VERTICAL   = new Set(["parent","grandparent","uncle"]);
@@ -423,11 +420,8 @@ function Node({person,p,sel,onClick,outsider}) {
         fill={"url(#"+gid+")"}
         clipPath={"url(#"+cid+")"}/>
 
-      {/* ── Bottom colour strip (mirrors top) ── */}
+      {/* ── Bottom colour strip only ── */}
       <rect x={0} y={NH-STRIP} width={NW} height={STRIP} rx={2} fill={col} opacity={0.9}/>
-
-      {/* ── Top colour strip ── */}
-      <rect width={NW} height={STRIP} rx={2} fill={col} opacity={0.9}/>
 
       {/* ── Info section — name + years only ── */}
       {/* Name */}
@@ -1193,8 +1187,6 @@ function TreeEditor({tree,onSave,onBack}) {
                   return (
                     <div key={p.id} onClick={()=>setSelId(p.id===selId?null:p.id)}
                       style={{background:"#ffffff",border:"2px solid "+(selId===p.id?"#6366f1":gCol),borderRadius:16,overflow:"hidden",display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer",boxShadow:selId===p.id?"0 0 0 3px #c7d2fe":"0 2px 8px rgba(99,102,241,0.08)",position:"relative",transition:"box-shadow 0.15s"}}>
-                      {/* Top colour strip */}
-                      <div style={{width:"100%",height:5,background:gCol,flexShrink:0}}/>
                       {/* Photo area — portrait (3:4 ratio) */}
                       <div style={{width:"100%",aspectRatio:"3/4",position:"relative",overflow:"hidden",background:gBg,display:"flex",alignItems:"center",justifyContent:"center"}}>
                         {p.photo
@@ -1226,6 +1218,8 @@ function TreeEditor({tree,onSave,onBack}) {
                           <button onClick={()=>openEditPerson(p)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>✏️</button>
                           <button onClick={()=>setConfirmPerson(p.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>🗑</button>
                         </div>
+                        {/* Bottom colour strip — same as SVG node */}
+                        <div style={{width:"100%",height:5,background:gCol,marginTop:6,borderRadius:"0 0 2px 2px",flexShrink:0}}/>
                       </div>
                     </div>
                   ); }}
