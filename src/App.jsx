@@ -1455,15 +1455,15 @@ function ExportModal({tree, onClose}) {
   const inp={background:"#f8faff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"10px 13px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT};
 
   return (
-    <div style={{position:"fixed",inset:0,background:"#00000099",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:1002}}>
-      <div style={{background:"#ffffff",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:540,maxHeight:"92vh",overflow:"auto",paddingBottom:"env(safe-area-inset-bottom)"}}>
-        <div style={{display:"flex",justifyContent:"center",padding:"12px 0 0"}}><div style={{width:40,height:4,borderRadius:2,background:"#d1d9f0"}}/></div>
-        <div style={{padding:"12px 18px 8px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+    <div style={{position:"fixed",inset:0,background:"#00000099",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1002,padding:"16px"}}>
+      <div style={{background:"#ffffff",borderRadius:20,width:"100%",maxWidth:560,maxHeight:"90vh",overflow:"auto",boxShadow:"0 12px 48px rgba(16,185,129,0.15)",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"none"}}/>
+        <div style={{padding:"16px 20px",borderBottom:"1px solid #e2e8f0",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,background:"#ffffff",zIndex:1,borderRadius:"20px 20px 0 0",flexShrink:0}}>
           <span style={{fontSize:16,fontWeight:700,color:"#10b981",fontFamily:FONT}}>🖼️ Görüntü Olarak Kaydet</span>
-          <button onClick={onClose} style={{background:"transparent",border:"none",color:"#64748b",fontSize:24,cursor:"pointer"}}>✕</button>
+          <button onClick={onClose} style={{background:"transparent",border:"none",color:"#64748b",fontSize:24,cursor:"pointer",lineHeight:1}}>✕</button>
         </div>
 
-        <div style={{padding:"0 16px 24px",display:"flex",flexDirection:"column",gap:16}}>
+        <div style={{padding:"16px 20px 24px",display:"flex",flexDirection:"column",gap:16,overflowY:"auto"}}>
 
           {/* ── Scope ── */}
           <div>
@@ -1709,14 +1709,14 @@ function PrintModal({tree,onClose}) {
   const lbl={fontSize:12,color:"#64748b",fontWeight:600,marginBottom:6,display:"block",fontFamily:FONT};
 
   return (
-    <div style={{position:"fixed",inset:0,background:"#00000099",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:1002}}>
-      <div style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:540,maxHeight:"90vh",overflow:"auto",paddingBottom:"env(safe-area-inset-bottom)"}}>
-        <div style={{display:"flex",justifyContent:"center",padding:"12px 0 0"}}><div style={{width:40,height:4,borderRadius:2,background:"#d1d9f0"}}/></div>
-        <div style={{padding:"12px 18px 8px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+    <div style={{position:"fixed",inset:0,background:"#00000099",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1002,padding:"16px"}}>
+      <div style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:20,width:"100%",maxWidth:560,maxHeight:"90vh",overflow:"auto",boxShadow:"0 12px 48px rgba(99,102,241,0.15)",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"none"}}/>
+        <div style={{padding:"16px 20px",borderBottom:"1px solid #e2e8f0",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,background:"#ffffff",zIndex:1,borderRadius:"20px 20px 0 0",flexShrink:0}}>
           <span style={{fontSize:16,fontWeight:700,color:"#6366f1",fontFamily:FONT}}>🖨️ Yazdır / PDF Kaydet</span>
-          <button onClick={onClose} style={{background:"transparent",border:"none",color:"#64748b",fontSize:24,cursor:"pointer"}}>✕</button>
+          <button onClick={onClose} style={{background:"transparent",border:"none",color:"#64748b",fontSize:24,cursor:"pointer",lineHeight:1}}>✕</button>
         </div>
-        <div style={{padding:"0 16px 20px",display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{padding:"16px 20px 24px",display:"flex",flexDirection:"column",gap:14,overflowY:"auto"}}>
 
           {/* Scope selector */}
           <div>
