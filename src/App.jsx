@@ -8,7 +8,7 @@ const C = {
   text:"#1e293b", muted:"#64748b", line:"#94a3b8",
   danger:"#ef4444", success:"#10b981",
 };
-const NW=154, NH=104, MIN_GAP=18, VGAP=100;
+const NW=130, NH=180, MIN_GAP=20, VGAP=110;
 const FONT = "'Poppins',sans-serif";
 
 const REL_DEFS = [
@@ -342,7 +342,7 @@ function buildLayout(people, rels) {
   };
 }
 
-// ─── SVG Node ─────────────────────────────────────────────────────────────────
+// ─── SVG Node — portrait card ────────────────────────────────────────────────
 function Node({person,p,sel,onClick,outsider}) {
   const col        = person.gender==="male" ? C.male : C.female;
   const normalBg   = person.gender==="male" ? "#dbeafe" : "#fce7f3";
@@ -350,29 +350,68 @@ function Node({person,p,sel,onClick,outsider}) {
   const cardBg     = sel ? "#e0e7ff" : (outsider ? outsiderBg : normalBg);
   const nameFill   = outsider && !sel ? "#ffffff" : "#1e293b";
   const yearFill   = outsider && !sel ? "#cbd5e1" : "#64748b";
-  const isDead=!!person.died;
+  const isDead     = !!person.died;
+  // Portrait layout constants
+  const PH = Math.round(NW * 1.18); // photo area height (~3:4 within card)
+  const photoY = 5;                  // starts just below top strip
+  const infoY  = photoY + PH - 10;  // info overlaps photo bottom slightly
+  const ovalRx = NW * 0.52;         // oval x-radius for bottom clip
+  const ovalRy = 18;                 // oval y-radius
+  const clipId = "cp-"+person.id;
+  const ovalId = "op-"+person.id;
   return (
     <g transform={"translate("+(p.x-NW/2)+","+(p.y-NH/2)+")"} data-node="1"
        onClick={e=>{e.stopPropagation();onClick(person.id);}} style={{cursor:"pointer"}}>
       <defs>
-        <clipPath id={"cp-"+person.id}><circle cx={NW/2} cy={38} r={25}/></clipPath>
+        {/* Rectangular clip for photo area */}
+        <clipPath id={clipId}>
+          <rect x={0} y={photoY} width={NW} height={PH}/>
+        </clipPath>
+        {/* Oval clip for bottom of photo (portrait frame effect) */}
+        <clipPath id={ovalId}>
+          <ellipse cx={NW/2} cy={photoY+PH} rx={ovalRx} ry={ovalRy+2}/>
+        </clipPath>
         <filter id={"sh-"+person.id} x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="2" stdDeviation={sel?5:3} floodColor={col} floodOpacity={sel?0.3:0.1}/>
+          <feDropShadow dx="0" dy="3" stdDeviation={sel?6:3} floodColor={col} floodOpacity={sel?0.3:0.12}/>
         </filter>
       </defs>
-      <rect width={NW} height={NH} rx={14} fill={cardBg} stroke={col} strokeWidth={sel?2.5:(outsider?2:1.5)} filter={"url(#sh-"+person.id+")"} opacity={isDead?0.65:1}/>
-      {outsider&&!sel&&<rect width={NW} height={NH} rx={14} fill="none" stroke={col} strokeWidth={1} strokeDasharray="4 3" opacity={0.4}/>}
+
+      {/* Card background */}
+      <rect width={NW} height={NH} rx={14} fill={cardBg}
+        stroke={sel?"#6366f1":col} strokeWidth={sel?2.5:(outsider?2:1.5)}
+        filter={"url(#sh-"+person.id+")"} opacity={isDead?0.65:1}/>
+      {outsider&&!sel&&<rect width={NW} height={NH} rx={14} fill="none" stroke={col} strokeWidth={1} strokeDasharray="4 3" opacity={0.35}/>}
+
+      {/* Top colour strip */}
       <rect width={NW} height={5} rx={2} fill={col}/>
+
+      {/* Photo or avatar — full width portrait */}
       {person.photo
-        ?<image href={person.photo} x={NW/2-25} y={13} width={50} height={50} clipPath={"url(#cp-"+person.id+")"} preserveAspectRatio="xMidYMid slice"/>
-        :<><circle cx={NW/2} cy={38} r={25} fill={normalBg} stroke={col} strokeWidth={1.5}/><text x={NW/2} y={46} textAnchor="middle" fill={col} fontSize={20} fontFamily="serif">{person.gender==="male"?"♂":"♀"}</text></>
+        ?<image href={person.photo} x={0} y={photoY} width={NW} height={PH}
+            clipPath={"url(#"+clipId+")"} preserveAspectRatio="xMidYMid slice"/>
+        :<>
+          <rect x={0} y={photoY} width={NW} height={PH} fill={normalBg} clipPath={"url(#"+clipId+")"}/>
+          <text x={NW/2} y={photoY+PH*0.55} textAnchor="middle" fill={col} fontSize={44}
+            fontFamily="serif" opacity={0.45}>{person.gender==="male"?"♂":"♀"}</text>
+        </>
       }
-      <circle cx={NW/2} cy={38} r={25} fill="none" stroke={col} strokeWidth={1.5} opacity={0.5}/>
-      {isDead&&<text x={NW-12} y={18} fill="#94a3b8" fontSize={13}>✝</text>}
-      <text x={NW/2} y={76} textAnchor="middle" fill={nameFill} fontSize={11} fontWeight="700" fontFamily={FONT}>
-        {person.name.length>18?person.name.slice(0,17)+"…":person.name}
+
+      {/* Oval white arch at bottom of photo */}
+      <ellipse cx={NW/2} cy={photoY+PH} rx={ovalRx} ry={ovalRy}
+        fill={cardBg} stroke={col} strokeWidth={1.5} opacity={0.92}/>
+
+      {/* Death marker */}
+      {isDead&&<text x={NW-9} y={16} fill="#94a3b8" fontSize={12}>✝</text>}
+
+      {/* Name */}
+      <text x={NW/2} y={infoY+18} textAnchor="middle" fill={nameFill}
+        fontSize={10} fontWeight="700" fontFamily={FONT}>
+        {person.name.length>16?person.name.slice(0,15)+"…":person.name}
       </text>
-      <text x={NW/2} y={92} textAnchor="middle" fill={yearFill} fontSize={10} fontFamily={FONT}>
+
+      {/* Years */}
+      <text x={NW/2} y={infoY+32} textAnchor="middle" fill={yearFill}
+        fontSize={9} fontFamily={FONT}>
         {person.born||"?"}{person.died?" – "+person.died:""}
       </text>
     </g>
@@ -1102,7 +1141,7 @@ function TreeEditor({tree,onSave,onBack}) {
               ?<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{peopleSearch}" için sonuç yok</div>
               :<DragGrid
                 items={filteredPeople}
-                columns="repeat(auto-fill,minmax(155px,1fr))"
+                columns="repeat(auto-fill,minmax(130px,1fr))"
                 onReorder={filtered=>{
                   if(!peopleSearch.trim()){ setPeople(filtered); return; }
                   const ids=filtered.map(p=>p.id);
@@ -1116,25 +1155,37 @@ function TreeEditor({tree,onSave,onBack}) {
                   const gBg=p.gender==="male"?"#dbeafe":"#fce7f3";
                   return (
                     <div key={p.id} onClick={()=>setSelId(p.id===selId?null:p.id)}
-                      style={{background:"#ffffff",border:"2px solid "+(selId===p.id?"#6366f1":gCol),borderRadius:14,padding:"14px 10px 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:8,cursor:"pointer",boxShadow:selId===p.id?"0 0 0 3px #c7d2fe":"0 2px 6px rgba(99,102,241,0.07)",position:"relative",transition:"box-shadow 0.15s"}}>
-                      {/* Gender/outsider badge */}
-                      <div style={{position:"absolute",top:7,left:8,background:isOutsider?"#fef3c7":gBg,border:"1px solid "+(isOutsider?"#fcd34d":gCol),borderRadius:4,fontSize:9,color:isOutsider?"#92400e":gCol,padding:"1px 5px",fontWeight:600,fontFamily:FONT}}>
-                        {isOutsider?"dışarıdan":p.gender==="male"?"♂ Erkek":"♀ Kadın"}
+                      style={{background:"#ffffff",border:"2px solid "+(selId===p.id?"#6366f1":gCol),borderRadius:16,overflow:"hidden",display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer",boxShadow:selId===p.id?"0 0 0 3px #c7d2fe":"0 2px 8px rgba(99,102,241,0.08)",position:"relative",transition:"box-shadow 0.15s"}}>
+                      {/* Top colour strip */}
+                      <div style={{width:"100%",height:5,background:gCol,flexShrink:0}}/>
+                      {/* Photo area — portrait (3:4 ratio) */}
+                      <div style={{width:"100%",aspectRatio:"3/4",position:"relative",overflow:"hidden",background:gBg,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        {p.photo
+                          ?<img src={p.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                          :<span style={{fontSize:52,color:gCol,opacity:0.5}}>{p.gender==="male"?"♂":"♀"}</span>
+                        }
+                        {/* Oval vignette overlay for portrait feel */}
+                        <div style={{position:"absolute",inset:0,boxShadow:"inset 0 0 0 3px "+gCol+"55",borderRadius:0,pointerEvents:"none"}}/>
+                        {/* Oval frame at bottom */}
+                        <div style={{position:"absolute",bottom:-1,left:"50%",transform:"translateX(-50%)",width:"110%",height:28,background:"#ffffff",borderRadius:"50% 50% 0 0",border:"2px solid "+gCol,borderBottom:"none"}}/>
                       </div>
-                      {/* Photo / avatar */}
-                      <div style={{width:60,height:60,borderRadius:"50%",overflow:"hidden",border:"2.5px solid "+gCol,background:gBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,marginTop:8,flexShrink:0}}>
-                        {p.photo?<img src={p.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(p.gender==="male"?"♂":"♀")}
-                      </div>
-                      {/* Name */}
-                      <div style={{fontSize:13,fontWeight:700,textAlign:"center",color:"#1e293b",lineHeight:1.3,wordBreak:"break-word"}}>
-                        {p.name}{p.died&&<span style={{color:"#94a3b8",fontSize:11}}> ✝</span>}
-                      </div>
-                      {/* Years */}
-                      <div style={{fontSize:11,color:"#64748b",textAlign:"center"}}>{p.born||"?"}{p.died?" – "+p.died:""}</div>
-                      {/* Actions */}
-                      <div style={{display:"flex",gap:6,marginTop:2}} onClick={e=>e.stopPropagation()}>
-                        <button onClick={()=>openEditPerson(p)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>✏️</button>
-                        <button onClick={()=>setConfirmPerson(p.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>🗑</button>
+                      {/* Info section */}
+                      <div style={{width:"100%",padding:"8px 10px 6px",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                        {/* Badge */}
+                        <div style={{background:isOutsider?"#fef3c7":gBg,border:"1px solid "+(isOutsider?"#fcd34d":gCol),borderRadius:4,fontSize:9,color:isOutsider?"#92400e":gCol,padding:"1px 6px",fontWeight:600,fontFamily:FONT,marginBottom:1}}>
+                          {isOutsider?"dışarıdan":p.gender==="male"?"♂ Erkek":"♀ Kadın"}
+                        </div>
+                        {/* Name */}
+                        <div style={{fontSize:13,fontWeight:700,textAlign:"center",color:"#1e293b",lineHeight:1.3,wordBreak:"break-word"}}>
+                          {p.name}{p.died&&<span style={{color:"#94a3b8",fontSize:10}}> ✝</span>}
+                        </div>
+                        {/* Years */}
+                        <div style={{fontSize:11,color:"#64748b",textAlign:"center"}}>{p.born||"?"}{p.died?" – "+p.died:""}</div>
+                        {/* Actions */}
+                        <div style={{display:"flex",gap:5,marginTop:5}} onClick={e=>e.stopPropagation()}>
+                          <button onClick={()=>openEditPerson(p)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>✏️</button>
+                          <button onClick={()=>setConfirmPerson(p.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>🗑</button>
+                        </div>
                       </div>
                     </div>
                   ); }}
@@ -1160,7 +1211,7 @@ function TreeEditor({tree,onSave,onBack}) {
               ?<div style={{textAlign:"center",color:"#94a3b8",padding:"20px 0",fontSize:14}}>"{relsSearch}" için sonuç yok</div>
               :<DragGrid
                 items={filteredRels}
-                columns="repeat(auto-fill,minmax(240px,1fr))"
+                columns="repeat(auto-fill,minmax(160px,1fr))"
                 onReorder={filtered=>{
                   if(!relsSearch.trim()){ setRels(filtered); return; }
                   const ids=filtered.map(r=>r.id);
@@ -1168,37 +1219,49 @@ function TreeEditor({tree,onSave,onBack}) {
                   next.forEach((_,i)=>{ if(ids.includes(next[i].id)) next[i]=filtered[fi++]; });
                   setRels(next);
                 }}
-                renderItem={(r)=>{ const d=RMAP[r.type]||{}; const p1=people.find(p=>p.id===r.p1); const p2=people.find(p=>p.id===r.p2); return(
-                  <div key={r.id} style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:14,padding:"12px 12px 10px",display:"flex",flexDirection:"column",gap:8,boxShadow:"0 2px 6px rgba(99,102,241,0.06)"}}>
+                renderItem={(r)=>{ const d=RMAP[r.type]||{}; const p1=people.find(p=>p.id===r.p1); const p2=people.find(p=>p.id===r.p2);
+                  // Portrait mini-card for one person
+                  const PersonCard=({px})=>{
+                    if(!px) return <div style={{flex:1}}/>;
+                    const gc=px.gender==="male"?C.male:C.female;
+                    const gb=px.gender==="male"?"#dbeafe":"#fce7f3";
+                    return (
+                      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",minWidth:0}}>
+                        <div style={{width:"100%",aspectRatio:"3/4",position:"relative",overflow:"hidden",borderRadius:"10px 10px 50% 50%",border:"2.5px solid "+gc,background:gb,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:5}}>
+                          {px.photo
+                            ?<img src={px.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                            :<span style={{fontSize:30,color:gc,opacity:0.5}}>{px.gender==="male"?"♂":"♀"}</span>
+                          }
+                          <div style={{position:"absolute",inset:0,boxShadow:"inset 0 0 0 2px "+gc+"44",borderRadius:"inherit",pointerEvents:"none"}}/>
+                        </div>
+                        <div style={{fontSize:11,fontWeight:700,color:"#1e293b",textAlign:"center",wordBreak:"break-word",lineHeight:1.25}}>
+                          {px.name}{px.died&&<span style={{color:"#94a3b8",fontSize:10}}> ✝</span>}
+                        </div>
+                        {px.born&&<div style={{fontSize:10,color:"#64748b",marginTop:1}}>{px.born}{px.died?" – "+px.died:""}</div>}
+                      </div>
+                    );
+                  };
+                  return(
+                  <div key={r.id} style={{background:"#ffffff",border:"1px solid #e2e8f0",borderRadius:16,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 2px 8px rgba(99,102,241,0.07)"}}>
+                    {/* Colour strip */}
+                    <div style={{height:4,background:d.color||"#6366f1",flexShrink:0}}/>
                     {/* Type badge */}
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      <span style={{fontSize:18}}>{d.icon||"🔗"}</span>
-                      <span style={{fontSize:12,fontWeight:700,color:d.color||"#6366f1",background:(d.color||"#6366f1")+"15",padding:"2px 8px",borderRadius:6,fontFamily:FONT}}>{d.label||r.type}</span>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 10px 4px"}}>
+                      <span style={{fontSize:16}}>{d.icon||"🔗"}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:d.color||"#6366f1",background:(d.color||"#6366f1")+"18",padding:"2px 10px",borderRadius:20,fontFamily:FONT}}>{d.label||r.type}</span>
                     </div>
-                    {/* People row */}
-                    <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:"#f8faff",borderRadius:10}}>
-                      {/* Person 1 */}
-                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1,minWidth:0}}>
-                        <div style={{width:34,height:34,borderRadius:"50%",overflow:"hidden",border:"2px solid "+(p1?.gender==="male"?C.male:C.female),background:p1?.gender==="male"?"#dbeafe":"#fce7f3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,marginBottom:3}}>
-                          {p1?.photo?<img src={p1.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(p1?.gender==="male"?"♂":"♀")}
-                        </div>
-                        <div style={{fontSize:11,fontWeight:600,color:"#1e293b",textAlign:"center",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{p1?.name||"?"}</div>
-                        {p1?.born&&<div style={{fontSize:10,color:"#94a3b8"}}>{p1.born}{p1.died?" ✝":""}</div>}
-                      </div>
+                    {/* Two portrait cards side by side */}
+                    <div style={{display:"flex",alignItems:"flex-start",gap:6,padding:"6px 10px 8px"}}>
+                      <PersonCard px={p1}/>
                       {/* Arrow */}
-                      <div style={{fontSize:16,color:d.color||"#6366f1",fontWeight:700,flexShrink:0}}>{d.bi?"↔":"→"}</div>
-                      {/* Person 2 */}
-                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1,minWidth:0}}>
-                        <div style={{width:34,height:34,borderRadius:"50%",overflow:"hidden",border:"2px solid "+(p2?.gender==="male"?C.male:C.female),background:p2?.gender==="male"?"#dbeafe":"#fce7f3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,marginBottom:3}}>
-                          {p2?.photo?<img src={p2.photo} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:(p2?.gender==="male"?"♂":"♀")}
-                        </div>
-                        <div style={{fontSize:11,fontWeight:600,color:"#1e293b",textAlign:"center",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{p2?.name||"?"}</div>
-                        {p2?.born&&<div style={{fontSize:10,color:"#94a3b8"}}>{p2.born}{p2.died?" ✝":""}</div>}
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"center",paddingTop:"30%",flexShrink:0}}>
+                        <span style={{fontSize:18,color:d.color||"#6366f1",fontWeight:700}}>{d.bi?"↔":"→"}</span>
                       </div>
+                      <PersonCard px={p2}/>
                     </div>
                     {/* Actions */}
-                    <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
-                      <button onClick={()=>openEditRel(r)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>✏️ Düzenle</button>
+                    <div style={{display:"flex",gap:6,padding:"0 10px 10px",justifyContent:"flex-end"}}>
+                      <button onClick={()=>openEditRel(r)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>✏️</button>
                       <button onClick={()=>setConfirmRel(r.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>🗑</button>
                     </div>
                   </div>
