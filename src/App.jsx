@@ -22,39 +22,81 @@ const RMAP       = Object.fromEntries(REL_DEFS.map(r=>[r.value,r]));
 const VERTICAL   = new Set(["parent","grandparent","uncle"]);
 const HORIZONTAL = new Set(["spouse","sibling"]);
 
-// ─── Storage (window.storage for Claude, localStorage fallback for browsers) ───
-const USE_CLAUDE_STORAGE = typeof window !== "undefined" && window.storage && typeof window.storage.get === "function";
+// ─── Storage ──────────────────────────────────────────────────────────────────
+// Priority: window.storage (Claude artifact) → localStorage (browser/GitHub Pages)
+// localStorage is persistent across sessions — data survives app close/refresh.
+// Photos are stored as base64 inside tree JSON; total size per project ~1-5 MB.
+// localStorage limit is ~5-10 MB per origin; for larger trees use Export/Import.
 
-async function storageGet(k) {
-  if (USE_CLAUDE_STORAGE) {
-    try { const r=await window.storage.get(k); return r?JSON.parse(r.value):null; } catch { return null; }
-  }
-  try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch { return null; }
+function useClaudeStorage() {
+  return typeof window !== "undefined"
+    && window.storage != null
+    && typeof window.storage.get === "function";
 }
 
-async function storageSet(k,v) {
-  if (USE_CLAUDE_STORAGE) {
-    try { await window.storage.set(k,JSON.stringify(v)); return true; } catch { return false; }
+// localStorage key prefix so we never clash with other apps
+const LS_PREFIX = "soyagaci_v1_";
+
+async function storageGet(k) {
+  if (useClaudeStorage()) {
+    try { const r = await window.storage.get(k); return r ? JSON.parse(r.value) : null; }
+    catch { return null; }
   }
-  try { localStorage.setItem(k,JSON.stringify(v)); return true; } catch { return false; }
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + k);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+async function storageSet(k, v) {
+  if (useClaudeStorage()) {
+    try { await window.storage.set(k, JSON.stringify(v)); return true; }
+    catch { return false; }
+  }
+  try {
+    localStorage.setItem(LS_PREFIX + k, JSON.stringify(v));
+    return true;
+  } catch(e) {
+    // QuotaExceededError — try removing old entries then retry
+    if (e.name === "QuotaExceededError" || e.code === 22) {
+      console.warn("localStorage quota exceeded, clearing old data...");
+      try {
+        // Remove all our own keys first to make room
+        const ownKeys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const lk = localStorage.key(i);
+          if (lk && lk.startsWith(LS_PREFIX)) ownKeys.push(lk);
+        }
+        // Sort by value length desc, remove largest first until we have room
+        ownKeys.sort((a,b) => (localStorage.getItem(b)||"").length - (localStorage.getItem(a)||"").length);
+        for (const lk of ownKeys) {
+          localStorage.removeItem(lk);
+          try { localStorage.setItem(LS_PREFIX + k, JSON.stringify(v)); return true; } catch {}
+        }
+      } catch {}
+    }
+    return false;
+  }
 }
 
 async function storageDel(k) {
-  if (USE_CLAUDE_STORAGE) {
+  if (useClaudeStorage()) {
     try { await window.storage.delete(k); return true; } catch { return false; }
   }
-  try { localStorage.removeItem(k); return true; } catch { return false; }
+  try { localStorage.removeItem(LS_PREFIX + k); return true; } catch { return false; }
 }
 
 async function storageList(pfx) {
-  if (USE_CLAUDE_STORAGE) {
-    try { const r=await window.storage.list(pfx); return r?r.keys:[]; } catch { return []; }
+  if (useClaudeStorage()) {
+    try { const r = await window.storage.list(pfx); return r ? r.keys : []; } catch { return []; }
   }
   try {
-    const keys=[];
-    for(let i=0;i<localStorage.length;i++){
-      const k=localStorage.key(i);
-      if(k&&k.startsWith(pfx)) keys.push(k);
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const lk = localStorage.key(i);
+      if (lk && lk.startsWith(LS_PREFIX + pfx)) {
+        keys.push(lk.slice(LS_PREFIX.length)); // strip our prefix before returning
+      }
     }
     return keys;
   } catch { return []; }
