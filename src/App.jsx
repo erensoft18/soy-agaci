@@ -1122,11 +1122,12 @@ function buildPrintHTML(tree, tileImgs, title) {
     '<style>',
     '  * { box-sizing:border-box; margin:0; padding:0; font-family:sans-serif; }',
     '  body { background:white; }',
-    '  .page { padding:8mm 10mm; display:flex; flex-direction:column; page-break-after:always; break-after:page; min-height:calc(100vh - 16mm); }',
+    '  .page { padding:8mm 10mm; display:flex; flex-direction:column; page-break-after:always; break-after:page; }',
     '  .page:last-child { page-break-after:avoid; break-after:avoid; }',
-    '  .diagram { flex:1; width:100%; }',
-    '  .footer { font-size:7pt; color:#94a3b8; text-align:left; margin-top:4mm; width:100%; }',
-    '  @media print { @page { margin:6mm; size:A4 landscape; } }',
+    '  .diagram { width:100%; }',
+    '  .diagram img { width:100%; height:auto; display:block; }',
+    '  .footer { font-size:7pt; color:#94a3b8; text-align:left; margin-top:4mm; width:100%; padding-top:2mm; border-top:0.5pt solid #e2e8f0; }',
+    '  @media print { @page { margin:6mm; size:A4 landscape; } body { margin:0; } }',
     '</style>',
     '</head>',
     '<body>',
@@ -1772,8 +1773,90 @@ function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport}) {
   );
 }
 
+// ─── Login ────────────────────────────────────────────────────────────────────
+const AUTH_USER = "erensoft";
+const AUTH_PASS = "sakaeli";
+const AUTH_KEY  = "soyagaci_auth";
+
+function LoginScreen({onLogin}) {
+  const [user,setUser]   = useState("");
+  const [pass,setPass]   = useState("");
+  const [showPass,setShowPass] = useState(false);
+  const [err,setErr]     = useState("");
+  const [shake,setShake] = useState(false);
+
+  const handleSubmit = () => {
+    if(user.trim()===AUTH_USER && pass===AUTH_PASS){
+      try { sessionStorage.setItem(AUTH_KEY,"1"); } catch{}
+      onLogin();
+    } else {
+      setErr("Kullanıcı adı veya şifre hatalı.");
+      setShake(true);
+      setTimeout(()=>setShake(false),600);
+    }
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#f0f4ff",fontFamily:FONT,padding:20}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');*{box-sizing:border-box}input::placeholder{color:#94a3b8}@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}.shake{animation:shake 0.5s ease}`}</style>
+      <div className={shake?"shake":""} style={{background:"#ffffff",borderRadius:24,boxShadow:"0 8px 40px rgba(99,102,241,0.13)",padding:"36px 28px",width:"100%",maxWidth:380,border:"1px solid #e2e8f0"}}>
+        {/* Logo */}
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{fontSize:48,marginBottom:8}}>🌳</div>
+          <div style={{fontSize:22,fontWeight:700,color:"#6366f1",fontFamily:FONT}}>SOY AĞACI</div>
+          <div style={{fontSize:12,color:"#94a3b8",letterSpacing:"0.08em",marginTop:2}}>AİLE BAĞLARI HARİTASI</div>
+        </div>
+        {/* Fields */}
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div>
+            <label style={{fontSize:12,fontWeight:600,color:"#64748b",display:"block",marginBottom:6,fontFamily:FONT}}>KULLANICI ADI</label>
+            <input
+              autoFocus
+              value={user}
+              onChange={e=>{setUser(e.target.value);setErr("");}}
+              onKeyDown={e=>e.key==="Enter"&&document.getElementById("pass-input")?.focus()}
+              placeholder="Kullanıcı adınızı girin"
+              style={{width:"100%",background:"#f8faff",border:"1px solid #e2e8f0",borderRadius:10,padding:"13px 15px",fontSize:15,color:"#1e293b",outline:"none",fontFamily:FONT}}/>
+          </div>
+          <div>
+            <label style={{fontSize:12,fontWeight:600,color:"#64748b",display:"block",marginBottom:6,fontFamily:FONT}}>ŞİFRE</label>
+            <div style={{position:"relative"}}>
+              <input
+                id="pass-input"
+                type={showPass?"text":"password"}
+                value={pass}
+                onChange={e=>{setPass(e.target.value);setErr("");}}
+                onKeyDown={e=>e.key==="Enter"&&handleSubmit()}
+                placeholder="Şifrenizi girin"
+                style={{width:"100%",background:"#f8faff",border:"1px solid #e2e8f0",borderRadius:10,padding:"13px 42px 13px 15px",fontSize:15,color:"#1e293b",outline:"none",fontFamily:FONT}}/>
+              <button onClick={()=>setShowPass(v=>!v)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",cursor:"pointer",fontSize:18,color:"#94a3b8",padding:0}}>
+                {showPass?"🙈":"👁️"}
+              </button>
+            </div>
+          </div>
+          {err&&(
+            <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:9,padding:"10px 14px",fontSize:13,color:"#ef4444",fontFamily:FONT,textAlign:"center"}}>
+              ⚠️ {err}
+            </div>
+          )}
+          <button
+            onClick={handleSubmit}
+            disabled={!user.trim()||!pass}
+            style={{background:(user.trim()&&pass)?"#6366f1":"#c7d2fe",border:"none",borderRadius:12,color:"#ffffff",padding:"14px",fontSize:16,cursor:(user.trim()&&pass)?"pointer":"not-allowed",fontWeight:700,fontFamily:FONT,marginTop:4,transition:"background 0.2s"}}>
+            Giriş Yap
+          </button>
+        </div>
+        <div style={{textAlign:"center",marginTop:20,fontSize:12,color:"#cbd5e1",fontFamily:FONT}}>
+          © {new Date().getFullYear()} Soy Ağacı · Tüm hakları saklıdır
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
+  const [authed,setAuthed] = useState(()=>{ try { return sessionStorage.getItem(AUTH_KEY)==="1"; } catch { return false; } });
   const [trees,setTrees]=useState([]);
   const [openId,setOpenId]=useState(null);
   const [loading,setLoading]=useState(true);
@@ -1788,6 +1871,7 @@ export default function App() {
   const STYLE="@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');*{box-sizing:border-box}input::placeholder{color:#94a3b8}select option{background:#ffffff;color:#1e293b}::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:#f0f4ff}::-webkit-scrollbar-thumb{background:#c7d2f0;border-radius:3px}";
   const currentTree=trees.find(t=>t.id===openId);
 
+  if(!authed) return <LoginScreen onLogin={()=>setAuthed(true)}/>;
   if(openId&&currentTree) return <div><style>{STYLE}</style><TreeEditor tree={currentTree} onSave={saveTree} onBack={()=>setOpenId(null)}/></div>;
   return <div><style>{STYLE}</style><Home trees={trees} loading={loading} onOpen={setOpenId} onCreate={createTree} onDelete={deleteTree} onImport={importTree} onExport={exportTree}/></div>;
 }
