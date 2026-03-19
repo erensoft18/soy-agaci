@@ -2064,7 +2064,7 @@ function TreeEditor({tree,onSave,onBack}) {
 // ─── GitHub API ──────────────────────────────────────────────────────────────
 // ─── GitHub Sabit Ayarlar ─────────────────────────────────────────────────────
 // Aşağıdaki değerleri doldurun:
-const GH_TOKEN = "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";          // GitHub Personal Access Token (repo yetkili)
+const GH_TOKEN = "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";          // GitHub Personal Access Token (repo yetkili)
 const GH_OWNER = "erensoft18";          // GitHub kullanıcı adınız (örn: "erensoft18")
 const GH_REPO  = "soy-agaci-veriler"; // Repo adı (otomatik oluşturulur)
 
@@ -2142,7 +2142,12 @@ async function ghGetTree(token, owner, repo, filename) {
 async function ghSaveTree(token, owner, repo, tree) {
   const filename = tree.id.replace("tree:","") + ".json";
   const path = "/repos/"+owner+"/"+repo+"/contents/trees/"+filename;
-  const content = btoa(unescape(encodeURIComponent(JSON.stringify(tree, null, 2))));
+  // Safe base64 encode that handles large content (photos etc)
+  const jsonStr = JSON.stringify(tree, null, 2);
+  const bytes = new TextEncoder().encode(jsonStr);
+  let binary = "";
+  bytes.forEach(b => binary += String.fromCharCode(b));
+  const content = btoa(binary);
   // Get existing SHA if file exists
   let sha;
   try {
@@ -2505,43 +2510,54 @@ export default function App() {
     setLoading(false);
   })(); },[]);
 
-  const createTree=name=>{
-    const id="tree:"+Date.now(),now=Date.now();
-    const t={id,name,people:[],rels:[],createdAt:now,updatedAt:now};
-    setTrees(prev=>[t,...prev]);
-    setOpenId(id);
-  };
-
-  const saveTree=async tree=>{
-    await storageSet(tree.id,tree);
-    setTrees(prev=>{ const idx=prev.findIndex(t=>t.id===tree.id); const next=idx===-1?[tree,...prev]:prev.map(t=>t.id===tree.id?tree:t); return next.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); });
-    // GitHub sync — always read fresh settings
-    const gs2=ghSettingsGet();
-    if(gs2?.token){
-      setGhStatus("syncing");
-      try { await ghSaveTree(gs2.token,gs2.owner,gs2.repo,tree); setGhStatus("synced"); }
-      catch(e){ console.error("GitHub save failed:",e.message); setGhStatus("error"); }
+  // ── Central GitHub push helper ──────────────────────────────────────────────
+  const ghPush = async (tree) => {
+    const gs = ghSettingsGet();
+    if (!gs?.token) return;
+    setGhStatus("syncing");
+    try {
+      await ghSaveTree(gs.token, gs.owner, gs.repo, tree);
+      setGhStatus("synced");
+    } catch(e) {
+      console.error("GitHub push failed:", e.message);
+      setGhStatus("error");
+      // Queue for retry on next save
     }
   };
 
-  const deleteTree=async id=>{
+  const createTree = async name => {
+    const id="tree:"+Date.now(), now=Date.now();
+    const t={id,name,people:[],rels:[],createdAt:now,updatedAt:now};
+    await storageSet(id, t);
+    setTrees(prev=>[t,...prev]);
+    setOpenId(id);
+    await ghPush(t);
+  };
+
+  const saveTree = async tree => {
+    await storageSet(tree.id, tree);
+    setTrees(prev=>{ const idx=prev.findIndex(t=>t.id===tree.id); const next=idx===-1?[tree,...prev]:prev.map(t=>t.id===tree.id?tree:t); return next.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); });
+    await ghPush(tree);
+  };
+
+  const deleteTree = async id => {
     await storageDel(id);
     setTrees(prev=>prev.filter(t=>t.id!==id));
     if(openId===id) setOpenId(null);
-    const gs3=ghSettingsGet();
-    if(gs3?.token){
-      try { await ghDeleteTree(gs3.token,gs3.owner,gs3.repo,id); }
-      catch(e){ console.warn("GitHub delete failed:",e.message); }
+    const gs=ghSettingsGet();
+    if(gs?.token){
+      try { await ghDeleteTree(gs.token, gs.owner, gs.repo, id); }
+      catch(e){ console.warn("GitHub delete failed:", e.message); }
     }
   };
 
-  const importTree=async data=>{
-    const id="tree:"+Date.now(),now=Date.now();
+  const importTree = async data => {
+    const id="tree:"+Date.now(), now=Date.now();
     const tree={...data,id,updatedAt:now,importedAt:now};
-    await storageSet(id,tree);
+    await storageSet(id, tree);
     setTrees(prev=>[tree,...prev]);
-    if(ghSettings?.token){
-      try { await ghSaveTree(ghSettings.token,ghSettings.owner,ghSettings.repo,tree); }
+    if(true){
+      try { await ghPush(tree); }
       catch(e){ console.warn("GitHub import save failed:",e); }
     }
   };
