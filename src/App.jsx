@@ -572,15 +572,16 @@ function Canvas({people,rels,selId,onSelect}) {
 
 // ─── Drag-sortable list ────────────────────────────────────────────────────────
 // ─── DragGrid — mouse + touch drag-to-reorder for grid layouts ───────────────
+// ─── DragHandle icon (rendered inside each card) ─────────────────────────────
+// Cards call useDragHandle() to get the handle props, then spread on the handle element
 function DragGrid({items, onReorder, renderItem, columns}) {
-  const [dragging, setDragging]   = useState(null);   // index being dragged
-  const [overIdx,  setOverIdx]    = useState(null);   // index being hovered
-  const [ghost,    setGhost]      = useState(null);   // {x,y,w,h} for floating ghost
-  const containerRef = useRef(null);
-  const itemRefs     = useRef({});
-  const pointerStart = useRef(null); // {x,y,idx}
+  const [dragging, setDragging] = useState(null);
+  const [overIdx,  setOverIdx]  = useState(null);
+  const [ghost,    setGhost]    = useState(null);
+  const itemRefs    = useRef({});
+  const pointerRef  = useRef(null);
+  const activeIdx   = useRef(null); // which index is being dragged
 
-  // Helper: find grid index from pointer position
   const idxFromPoint = (cx, cy) => {
     let closest = null, closestDist = Infinity;
     Object.entries(itemRefs.current).forEach(([i, el]) => {
@@ -593,50 +594,62 @@ function DragGrid({items, onReorder, renderItem, columns}) {
     return closest;
   };
 
+  // Called ONLY from the handle element
   const startDrag = (e, idx) => {
     e.preventDefault();
+    e.stopPropagation();
     const isTouch = e.touches != null;
     const cx = isTouch ? e.touches[0].clientX : e.clientX;
     const cy = isTouch ? e.touches[0].clientY : e.clientY;
     const el = itemRefs.current[idx];
-    const r  = el ? el.getBoundingClientRect() : {left:cx,top:cy,width:160,height:80};
-    pointerStart.current = { x:cx, y:cy, idx };
+    const r  = el ? el.getBoundingClientRect() : {left:cx, top:cy, width:160, height:200};
+    pointerRef.current = {x:cx, y:cy};
+    activeIdx.current  = idx;
     setDragging(idx);
     setOverIdx(idx);
-    setGhost({ x:r.left, y:r.top, w:r.width, h:r.height });
+    setGhost({x:r.left, y:r.top, w:r.width, h:r.height});
   };
 
   const moveDrag = useCallback((e) => {
-    if (dragging === null) return;
+    if (activeIdx.current === null) return;
     const isTouch = e.touches != null;
     const cx = isTouch ? e.touches[0].clientX : e.clientX;
     const cy = isTouch ? e.touches[0].clientY : e.clientY;
-    setGhost(g => g ? { ...g, x: g.x + (cx - pointerStart.current.x), y: g.y + (cy - pointerStart.current.y) } : g);
-    pointerStart.current.x = cx;
-    pointerStart.current.y = cy;
+    if (e.cancelable) e.preventDefault();
+    const dx = cx - pointerRef.current.x;
+    const dy = cy - pointerRef.current.y;
+    pointerRef.current = {x:cx, y:cy};
+    setGhost(g => g ? {...g, x:g.x+dx, y:g.y+dy} : g);
     const over = idxFromPoint(cx, cy);
     if (over !== null) setOverIdx(over);
-  }, [dragging]);
+  }, []);
 
   const endDrag = useCallback(() => {
-    if (dragging === null) return;
-    if (overIdx !== null && overIdx !== dragging) {
-      const next = [...items];
-      const [moved] = next.splice(dragging, 1);
-      next.splice(overIdx, 0, moved);
-      onReorder(next);
-    }
-    setDragging(null);
-    setOverIdx(null);
+    const idx = activeIdx.current;
+    if (idx === null) return;
+    setOverIdx(prev => {
+      if (prev !== null && prev !== idx) {
+        setDragging(null);
+        const next = [...items];
+        const [moved] = next.splice(idx, 1);
+        next.splice(prev, 0, moved);
+        onReorder(next);
+      } else {
+        setDragging(null);
+      }
+      return null;
+    });
     setGhost(null);
-    pointerStart.current = null;
-  }, [dragging, overIdx, items, onReorder]);
+    activeIdx.current  = null;
+    pointerRef.current = null;
+  }, [items, onReorder]);
 
   useEffect(() => {
     if (dragging === null) return;
+    const opts = {passive:false};
     window.addEventListener("mousemove", moveDrag);
     window.addEventListener("mouseup",   endDrag);
-    window.addEventListener("touchmove", moveDrag, { passive:false });
+    window.addEventListener("touchmove", moveDrag, opts);
     window.addEventListener("touchend",  endDrag);
     return () => {
       window.removeEventListener("mousemove", moveDrag);
@@ -646,48 +659,54 @@ function DragGrid({items, onReorder, renderItem, columns}) {
     };
   }, [dragging, moveDrag, endDrag]);
 
-  const gridStyle = {
-    display: "grid",
-    gridTemplateColumns: columns || "repeat(auto-fill,minmax(155px,1fr))",
-    gap: 10,
-    position: "relative",
-  };
+  // Handle element factory — call inside renderItem, spread returned props on your handle icon
+  const makeHandle = (i) => ({
+    onMouseDown: (e) => { if(e.button===0) startDrag(e, i); },
+    onTouchStart:(e) => startDrag(e, i),
+    style: {
+      cursor: dragging===i ? "grabbing" : "grab",
+      touchAction: "none",
+      userSelect: "none",
+      WebkitUserSelect: "none",
+      padding: "4px 6px",
+      borderRadius: 6,
+      background: "transparent",
+      border: "none",
+      color: "#94a3b8",
+      fontSize: 18,
+      lineHeight: 1,
+      flexShrink: 0,
+    }
+  });
 
   return (
-    <div ref={containerRef} style={gridStyle}>
+    <div style={{display:"grid", gridTemplateColumns:columns||"repeat(auto-fill,minmax(155px,1fr))", gap:10, position:"relative"}}>
       {items.map((item, i) => (
         <div
           key={item.id}
           ref={el => itemRefs.current[i] = el}
-          onMouseDown={e => { if(e.button===0) startDrag(e,i); }}
-          onTouchStart={e => startDrag(e, i)}
           style={{
-            opacity:   dragging===i ? 0.3 : 1,
-            transform: overIdx===i && dragging!==null && dragging!==i ? "scale(1.03)" : "scale(1)",
+            opacity:   dragging===i ? 0.25 : 1,
             outline:   overIdx===i && dragging!==null && dragging!==i ? "2.5px dashed #6366f1" : "none",
             borderRadius: 14,
-            transition: "transform 0.12s, opacity 0.12s",
-            cursor: "grab",
+            transition: "opacity 0.1s",
             userSelect: "none",
           }}>
-          {renderItem(item, i)}
+          {renderItem(item, i, makeHandle(i))}
         </div>
       ))}
-      {/* Floating ghost card while dragging */}
+      {/* Ghost card */}
       {ghost && dragging !== null && (
         <div style={{
-          position: "fixed",
-          left: ghost.x, top: ghost.y,
-          width: ghost.w, height: ghost.h,
-          pointerEvents: "none",
-          zIndex: 9999,
-          opacity: 0.85,
-          transform: "rotate(2deg) scale(1.05)",
-          boxShadow: "0 12px 32px rgba(99,102,241,0.3)",
-          borderRadius: 14,
-          overflow: "hidden",
+          position:"fixed", left:ghost.x, top:ghost.y,
+          width:ghost.w, height:ghost.h,
+          pointerEvents:"none", zIndex:9999,
+          opacity:0.88,
+          transform:"rotate(1.5deg) scale(1.04)",
+          boxShadow:"0 16px 40px rgba(99,102,241,0.25)",
+          borderRadius:14, overflow:"hidden",
         }}>
-          {renderItem(items[dragging], dragging)}
+          {renderItem(items[dragging], dragging, {style:{display:"none"}})}
         </div>
       )}
     </div>
@@ -1903,7 +1922,7 @@ function TreeEditor({tree,onSave,onBack}) {
                   next.forEach((_,i)=>{ if(ids.includes(next[i].id)) next[i]=filtered[fi++]; });
                   setPeople(next);
                 }}
-                renderItem={(p)=>{
+                renderItem={(p, _i, handle)=>{
                   const isOutsider=(()=>{ const hp=new Set(rels.filter(r=>r.type==="parent").map(r=>r.p2)); const hs=new Set([...rels.filter(r=>r.type==="spouse").map(r=>r.p1),...rels.filter(r=>r.type==="spouse").map(r=>r.p2)]); return hs.has(p.id)&&!hp.has(p.id); })();
                   const gCol=p.gender==="male"?C.male:C.female;
                   const gBg=p.gender==="male"?"#dbeafe":"#fce7f3";
@@ -1936,10 +1955,11 @@ function TreeEditor({tree,onSave,onBack}) {
                         );})()}
                         {/* Years */}
                         <div style={{fontSize:11,color:"#64748b",textAlign:"center"}}>{p.born||"?"}{p.died?" – "+p.died:""}</div>
-                        {/* Actions */}
-                        <div style={{display:"flex",gap:5,marginTop:5}} onClick={e=>e.stopPropagation()}>
+                        {/* Actions + drag handle */}
+                        <div style={{display:"flex",gap:5,marginTop:5,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
                           <button onClick={()=>openEditPerson(p)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>✏️</button>
                           <button onClick={()=>setConfirmPerson(p.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>🗑</button>
+                          <span {...handle} title="Taşı">⠿</span>
                         </div>
                         {/* Bottom colour strip — same as SVG node */}
                         <div style={{width:"100%",height:5,background:gCol,marginTop:6,borderRadius:"0 0 2px 2px",flexShrink:0}}/>
@@ -1976,7 +1996,7 @@ function TreeEditor({tree,onSave,onBack}) {
                   next.forEach((_,i)=>{ if(ids.includes(next[i].id)) next[i]=filtered[fi++]; });
                   setRels(next);
                 }}
-                renderItem={(r)=>{ const d=RMAP[r.type]||{}; const p1=people.find(p=>p.id===r.p1); const p2=people.find(p=>p.id===r.p2);
+                renderItem={(r, _i, handle)=>{ const d=RMAP[r.type]||{}; const p1=people.find(p=>p.id===r.p1); const p2=people.find(p=>p.id===r.p2);
                   // Portrait mini-card for one person
                   const PersonCard=({px})=>{
                     if(!px) return <div style={{flex:1}}/>;
@@ -2017,9 +2037,10 @@ function TreeEditor({tree,onSave,onBack}) {
                       <PersonCard px={p2}/>
                     </div>
                     {/* Actions */}
-                    <div style={{display:"flex",gap:6,padding:"0 10px 10px",justifyContent:"flex-end"}}>
+                    <div style={{display:"flex",gap:6,padding:"0 10px 10px",justifyContent:"flex-end",alignItems:"center"}}>
                       <button onClick={()=>openEditRel(r)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>✏️</button>
                       <button onClick={()=>setConfirmRel(r.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>🗑</button>
+                      <span {...handle} title="Taşı">⠿</span>
                     </div>
                   </div>
                 ); }}
@@ -2138,8 +2159,8 @@ function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport}) {
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-const AUTH_USER = "admin";
-const AUTH_PASS = "soyagaci";
+const AUTH_USER = "erensoft";
+const AUTH_PASS = "sakaeli";
 const AUTH_KEY  = "soyagaci_auth";
 
 function LoginScreen({onLogin}) {
