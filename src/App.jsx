@@ -1959,7 +1959,7 @@ function TreeEditor({tree,onSave,onBack}) {
                         <div style={{display:"flex",gap:5,marginTop:5,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
                           <button onClick={()=>openEditPerson(p)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>✏️</button>
                           <button onClick={()=>setConfirmPerson(p.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 9px",fontSize:13,cursor:"pointer"}}>🗑</button>
-                          <span {...handle} title="Taşı">⠿</span>
+                          <span {...handle} title="Taşı" style={{...handle.style,display:"flex",alignItems:"center",color:"#94a3b8"}}><svg width="16" height="20" viewBox="0 0 16 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="5" cy="5" r="2" fill="currentColor"/><circle cx="11" cy="5" r="2" fill="currentColor"/><circle cx="5" cy="10" r="2" fill="currentColor"/><circle cx="11" cy="10" r="2" fill="currentColor"/><circle cx="5" cy="15" r="2" fill="currentColor"/><circle cx="11" cy="15" r="2" fill="currentColor"/></svg></span>
                         </div>
                         {/* Bottom colour strip — same as SVG node */}
                         <div style={{width:"100%",height:5,background:gCol,marginTop:6,borderRadius:"0 0 2px 2px",flexShrink:0}}/>
@@ -2040,7 +2040,7 @@ function TreeEditor({tree,onSave,onBack}) {
                     <div style={{display:"flex",gap:6,padding:"0 10px 10px",justifyContent:"flex-end",alignItems:"center"}}>
                       <button onClick={()=>openEditRel(r)} style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:7,color:"#6366f1",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>✏️</button>
                       <button onClick={()=>setConfirmRel(r.id)} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:7,color:"#ef4444",padding:"5px 10px",fontSize:13,cursor:"pointer"}}>🗑</button>
-                      <span {...handle} title="Taşı">⠿</span>
+                      <span {...handle} title="Taşı" style={{...handle.style,display:"flex",alignItems:"center",color:"#94a3b8"}}><svg width="16" height="20" viewBox="0 0 16 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="5" cy="5" r="2" fill="currentColor"/><circle cx="11" cy="5" r="2" fill="currentColor"/><circle cx="5" cy="10" r="2" fill="currentColor"/><circle cx="11" cy="10" r="2" fill="currentColor"/><circle cx="5" cy="15" r="2" fill="currentColor"/><circle cx="11" cy="15" r="2" fill="currentColor"/></svg></span>
                     </div>
                   </div>
                 ); }}
