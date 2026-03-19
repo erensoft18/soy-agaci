@@ -2062,13 +2062,23 @@ function TreeEditor({tree,onSave,onBack}) {
 
 // ─── Home ─────────────────────────────────────────────────────────────────────
 // ─── GitHub API ──────────────────────────────────────────────────────────────
-const GH_SETTINGS_KEY = "soyagaci_gh_settings";
+// ─── GitHub Sabit Ayarlar ─────────────────────────────────────────────────────
+// Aşağıdaki değerleri doldurun:
+const GH_TOKEN = "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";          // GitHub Personal Access Token (repo yetkili)
+const GH_OWNER = "erensoft18";          // GitHub kullanıcı adınız (örn: "erensoft18")
+const GH_REPO  = "soy-agaci-veriler"; // Repo adı (otomatik oluşturulur)
 
 function ghSettingsGet() {
-  try { const v=localStorage.getItem(GH_SETTINGS_KEY); return v?JSON.parse(v):null; } catch { return null; }
+  // Kod üzerinde tanımlanmışsa onu kullan, yoksa localStorage'a bak
+  if (GH_TOKEN && GH_OWNER) {
+    return { token: GH_TOKEN, owner: GH_OWNER, repo: GH_REPO };
+  }
+  try { const v=localStorage.getItem("soyagaci_gh_settings"); return v?JSON.parse(v):null; } catch { return null; }
 }
 function ghSettingsSet(s) {
-  try { localStorage.setItem(GH_SETTINGS_KEY, JSON.stringify(s)); } catch {}
+  // Kod üzerinde tanımlanmışsa localStorage'a gerek yok
+  if (GH_TOKEN && GH_OWNER) return;
+  try { localStorage.setItem("soyagaci_gh_settings", JSON.stringify(s)); } catch {}
 }
 
 // GitHub API helpers
@@ -2385,7 +2395,7 @@ function LoginScreen({onLogin}) {
 
   const handleSubmit = () => {
     if(user.trim()===AUTH_USER && pass===AUTH_PASS){
-      try { sessionStorage.setItem(AUTH_KEY,"1"); } catch{}
+      try { localStorage.setItem(AUTH_KEY,"1"); } catch{}
       onLogin();
     } else {
       setErr("Kullanıcı adı veya şifre hatalı.");
@@ -2454,7 +2464,7 @@ function LoginScreen({onLogin}) {
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [authed,  setAuthed]  = useState(()=>{ try { return sessionStorage.getItem(AUTH_KEY)==="1"; } catch { return false; } });
+  const [authed,  setAuthed]  = useState(()=>{ try { return localStorage.getItem(AUTH_KEY)==="1"; } catch { return false; } });
   const [trees,   setTrees]   = useState([]);
   const [openId,  setOpenId]  = useState(null);
   const [loading, setLoading] = useState(true);
