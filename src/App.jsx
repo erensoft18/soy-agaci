@@ -2061,12 +2061,214 @@ function TreeEditor({tree,onSave,onBack}) {
 }
 
 // ─── Home ─────────────────────────────────────────────────────────────────────
-function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport}) {
+// ─── GitHub API ──────────────────────────────────────────────────────────────
+const GH_SETTINGS_KEY = "soyagaci_gh_settings";
+
+function ghSettingsGet() {
+  try { const v=localStorage.getItem(GH_SETTINGS_KEY); return v?JSON.parse(v):null; } catch { return null; }
+}
+function ghSettingsSet(s) {
+  try { localStorage.setItem(GH_SETTINGS_KEY, JSON.stringify(s)); } catch {}
+}
+
+// GitHub API helpers
+async function ghRequest(token, method, path, body) {
+  const res = await fetch("https://api.github.com"+path, {
+    method,
+    headers: {
+      Authorization: "token "+token,
+      "Content-Type": "application/json",
+      Accept: "application/vnd.github+json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({message:res.statusText}));
+    throw new Error(err.message || "GitHub API hatası");
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// Ensure repo exists (create if not)
+async function ghEnsureRepo(token, owner, repo) {
+  try {
+    await ghRequest(token, "GET", "/repos/"+owner+"/"+repo);
+  } catch {
+    // Create private repo
+    await ghRequest(token, "POST", "/user/repos", {
+      name: repo,
+      private: true,
+      description: "Soy Ağacı verileri",
+      auto_init: true,
+    });
+    // Wait a moment for repo to initialize
+    await new Promise(r=>setTimeout(r,1500));
+  }
+}
+
+// Get authenticated user info
+async function ghWhoAmI(token) {
+  const user = await ghRequest(token, "GET", "/user");
+  return user.login;
+}
+
+// List all tree files in repo
+async function ghListTrees(token, owner, repo) {
+  try {
+    const res = await ghRequest(token, "GET", "/repos/"+owner+"/"+repo+"/contents/trees");
+    if (!Array.isArray(res)) return [];
+    return res.filter(f=>f.name.endsWith(".json"));
+  } catch { return []; }
+}
+
+// Get a single tree file
+async function ghGetTree(token, owner, repo, filename) {
+  const res = await ghRequest(token, "GET", "/repos/"+owner+"/"+repo+"/contents/trees/"+filename);
+  const content = atob(res.content.split("\n").join(""));
+  return JSON.parse(content);
+}
+
+// Save (create or update) a tree file
+async function ghSaveTree(token, owner, repo, tree) {
+  const filename = tree.id.replace("tree:","") + ".json";
+  const path = "/repos/"+owner+"/"+repo+"/contents/trees/"+filename;
+  const content = btoa(unescape(encodeURIComponent(JSON.stringify(tree, null, 2))));
+  // Get existing SHA if file exists
+  let sha;
+  try {
+    const existing = await ghRequest(token, "GET", path);
+    sha = existing.sha;
+  } catch { sha = undefined; }
+  await ghRequest(token, "PUT", path, {
+    message: "Güncellendi: "+tree.name,
+    content,
+    ...(sha ? {sha} : {}),
+  });
+}
+
+// Delete a tree file
+async function ghDeleteTree(token, owner, repo, treeId) {
+  const filename = treeId.replace("tree:","") + ".json";
+  const path = "/repos/"+owner+"/"+repo+"/contents/trees/"+filename;
+  try {
+    const existing = await ghRequest(token, "GET", path);
+    await ghRequest(token, "DELETE", path, {
+      message: "Silindi",
+      sha: existing.sha,
+    });
+  } catch { /* file might not exist */ }
+}
+
+// ─── GitHub Settings Modal ────────────────────────────────────────────────────
+function GitHubSettingsModal({onClose, onSave, current}) {
+  const [token,  setToken]  = useState(current?.token  || "");
+  const [repo,   setRepo]   = useState(current?.repo   || "soy-agaci-veriler");
+  const [testing,setTesting]= useState(false);
+  const [status, setStatus] = useState("");
+  const [ok,     setOk]     = useState(false);
+
+  const inp = {background:"#f8faff",border:"1px solid #e2e8f0",borderRadius:9,color:"#1e293b",padding:"11px 13px",fontSize:14,outline:"none",width:"100%",fontFamily:FONT};
+  const lbl = {fontSize:12,color:"#64748b",fontWeight:600,display:"block",marginBottom:6,fontFamily:FONT};
+
+  const handleTest = async () => {
+    if (!token.trim()) return;
+    setTesting(true); setStatus(""); setOk(false);
+    try {
+      const owner = await ghWhoAmI(token.trim());
+      setStatus("✓ Bağlantı başarılı! Kullanıcı: "+owner);
+      setOk(true);
+    } catch(e) {
+      setStatus("⚠️ Hata: "+e.message);
+      setOk(false);
+    }
+    setTesting(false);
+  };
+
+  const handleSave = async () => {
+    if (!token.trim()||!repo.trim()) return;
+    setTesting(true); setStatus("Repo kontrol ediliyor…");
+    try {
+      const owner = await ghWhoAmI(token.trim());
+      await ghEnsureRepo(token.trim(), owner, repo.trim());
+      const settings = {token:token.trim(), repo:repo.trim(), owner};
+      ghSettingsSet(settings);
+      onSave(settings);
+      setStatus("✓ Kaydedildi!");
+    } catch(e) {
+      setStatus("⚠️ "+e.message);
+    }
+    setTesting(false);
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"#00000099",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000,padding:16}}>
+      <div style={{background:"#ffffff",borderRadius:20,width:"100%",maxWidth:440,overflow:"auto",maxHeight:"90vh",boxShadow:"0 8px 32px rgba(99,102,241,0.15)",border:"1px solid #e2e8f0"}}>
+        <div style={{padding:"18px 20px 14px",borderBottom:"1px solid #e2e8f0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:700,color:"#1e293b",fontFamily:FONT}}>🐙 GitHub Entegrasyonu</div>
+            <div style={{fontSize:12,color:"#64748b",marginTop:2,fontFamily:FONT}}>Projeler GitHub reponuza otomatik kaydedilir</div>
+          </div>
+          <button onClick={onClose} style={{background:"transparent",border:"none",color:"#64748b",fontSize:22,cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:14}}>
+          {/* How to get token */}
+          <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:10,padding:"10px 13px",fontSize:12,color:"#166534",lineHeight:1.6,fontFamily:FONT}}>
+            💡 <strong>Token oluşturmak için:</strong><br/>
+            GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token<br/>
+            <strong>repo</strong> yetkisini seçin.
+          </div>
+          <div>
+            <label style={lbl}>GITHUB PERSONAL ACCESS TOKEN</label>
+            <input
+              type="password"
+              value={token}
+              onChange={e=>{setToken(e.target.value);setStatus("");setOk(false);}}
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              style={inp}/>
+          </div>
+          <div>
+            <label style={lbl}>REPO ADI (otomatik oluşturulur)</label>
+            <input
+              value={repo}
+              onChange={e=>setRepo(e.target.value)}
+              placeholder="soy-agaci-veriler"
+              style={inp}/>
+            <div style={{fontSize:11,color:"#94a3b8",marginTop:4,fontFamily:FONT}}>github.com/kullanıcı/{repo||"soy-agaci-veriler"} (private)</div>
+          </div>
+          {status&&(
+            <div style={{background:ok?"#f0fdf4":"#fef2f2",border:"1px solid "+(ok?"#86efac":"#fca5a5"),borderRadius:9,padding:"10px 13px",fontSize:13,color:ok?"#166534":"#ef4444",fontFamily:FONT}}>
+              {status}
+            </div>
+          )}
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={handleTest} disabled={!token.trim()||testing}
+              style={{flex:1,background:"transparent",border:"1px solid #e2e8f0",borderRadius:10,color:"#1e293b",padding:"12px",fontSize:14,cursor:"pointer",fontFamily:FONT,opacity:(!token.trim()||testing)?0.5:1}}>
+              {testing?"⏳ Test…":"🔌 Bağlantı Test Et"}
+            </button>
+            <button onClick={handleSave} disabled={!token.trim()||!repo.trim()||testing}
+              style={{flex:1,background:"#6366f1",border:"1px solid #6366f1",borderRadius:10,color:"#ffffff",padding:"12px",fontSize:14,cursor:"pointer",fontWeight:700,fontFamily:FONT,opacity:(!token.trim()||!repo.trim()||testing)?0.5:1}}>
+              {testing?"⏳…":"💾 Kaydet ve Bağlan"}
+            </button>
+          </div>
+          {current&&(
+            <button onClick={()=>{ghSettingsSet(null);onSave(null);}}
+              style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:10,color:"#ef4444",padding:"11px",fontSize:13,cursor:"pointer",fontFamily:FONT}}>
+              🔌 GitHub Bağlantısını Kaldır
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport,ghSettings,ghStatus,onGhSettings}) {
   const [confirmId,setConfirmId]=useState(null);
   const [newName,setNewName]=useState("");
   const [view,setView]=useState("list");
   const [importErr,setImportErr]=useState("");
   const [importing,setImporting]=useState(false);
+  const [showGhSettings,setShowGhSettings]=useState(false);
   const importRef=useRef(null);
   const fmt=ts=>ts?new Date(ts).toLocaleDateString("tr-TR",{day:"2-digit",month:"short",year:"numeric"}):"";
   const handleCreate=()=>{ if(!newName.trim()) return; onCreate(newName.trim()); setNewName(""); setView("list"); };
@@ -2081,7 +2283,17 @@ function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport}) {
           <div style={{fontSize:19,fontWeight:700,color:"#6366f1",fontFamily:FONT}}>SOY AĞACI</div>
           <div style={{fontSize:11,color:"#94a3b8",letterSpacing:"0.08em"}}>AİLE BAĞLARI HARİTASI</div>
         </div>
-        <div style={{marginLeft:"auto",fontSize:13,color:"#64748b",fontWeight:500}}>{trees.length} proje</div>
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+          <div style={{fontSize:12,color:"#64748b",fontWeight:500}}>{trees.length} proje</div>
+          <button onClick={()=>setShowGhSettings(true)}
+            title={ghSettings?"GitHub: "+ghSettings.owner+"/"+ghSettings.repo:"GitHub'a bağlan"}
+            style={{background:ghSettings?"#f0fdf4":"#f8faff",border:"1px solid "+(ghSettings?"#86efac":"#e2e8f0"),borderRadius:8,padding:"5px 9px",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",gap:5,color:ghSettings?"#166534":"#64748b",fontFamily:FONT}}>
+            🐙
+            {ghStatus==="syncing"&&<span style={{fontSize:10}}>⏳</span>}
+            {ghStatus==="synced"&&<span style={{fontSize:10,color:"#10b981"}}>✓</span>}
+            {ghStatus==="error"&&<span style={{fontSize:10,color:"#ef4444"}}>!</span>}
+          </button>
+        </div>
       </div>
       {/* Action bar */}
       <div style={{background:"#ffffff",borderBottom:"1px solid #e2e8f0",padding:"12px 16px",display:"flex",gap:10,flexShrink:0}}>
@@ -2154,6 +2366,7 @@ function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport}) {
         </div>
       </div>
       {confirmId&&<Confirm message={'"'+(trees.find(t=>t.id===confirmId)||{}).name+'" silinsin mi?'} onYes={()=>{onDelete(confirmId);setConfirmId(null);}} onNo={()=>setConfirmId(null)}/>}
+      {showGhSettings&&<GitHubSettingsModal current={ghSettings} onSave={s=>{onGhSettings(s);setShowGhSettings(false);}} onClose={()=>setShowGhSettings(false)}/>}
     </div>
   );
 }
@@ -2241,22 +2454,85 @@ function LoginScreen({onLogin}) {
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [authed,setAuthed] = useState(()=>{ try { return sessionStorage.getItem(AUTH_KEY)==="1"; } catch { return false; } });
-  const [trees,setTrees]=useState([]);
-  const [openId,setOpenId]=useState(null);
-  const [loading,setLoading]=useState(true);
+  const [authed,  setAuthed]  = useState(()=>{ try { return sessionStorage.getItem(AUTH_KEY)==="1"; } catch { return false; } });
+  const [trees,   setTrees]   = useState([]);
+  const [openId,  setOpenId]  = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [ghSettings, setGhSettings] = useState(()=>ghSettingsGet());
+  const [ghStatus,   setGhStatus]   = useState(""); // "", "syncing", "synced", "error"
 
-  useEffect(()=>{ (async()=>{ setLoading(true); try { const keys=await storageList("tree:"); const loaded=await Promise.all(keys.map(k=>storageGet(k))); setTrees(loaded.filter(Boolean).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0))); } catch(e){console.error(e);} setLoading(false); })(); },[]);
+  // Load trees: first from localStorage, then sync from GitHub if connected
+  useEffect(()=>{ (async()=>{
+    setLoading(true);
+    try {
+      const keys=await storageList("tree:");
+      const local=await Promise.all(keys.map(k=>storageGet(k)));
+      let merged=local.filter(Boolean);
 
-  const createTree=name=>{ const id="tree:"+Date.now(),now=Date.now(); const t={id,name,people:[],rels:[],createdAt:now,updatedAt:now}; setTrees(prev=>[t,...prev]); setOpenId(id); };
-  const saveTree=async tree=>{ await storageSet(tree.id,tree); setTrees(prev=>{ const idx=prev.findIndex(t=>t.id===tree.id); const next=idx===-1?[tree,...prev]:prev.map(t=>t.id===tree.id?tree:t); return next.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); }); };
-  const deleteTree=async id=>{ await storageDel(id); setTrees(prev=>prev.filter(t=>t.id!==id)); if(openId===id) setOpenId(null); };
-  const importTree=async data=>{ const id="tree:"+Date.now(),now=Date.now(); const tree={...data,id,updatedAt:now,importedAt:now}; await storageSet(id,tree); setTrees(prev=>[tree,...prev]); };
+      if(ghSettings?.token) {
+        setGhStatus("syncing");
+        try {
+          const files=await ghListTrees(ghSettings.token,ghSettings.owner,ghSettings.repo);
+          const ghTrees=await Promise.all(files.map(f=>ghGetTree(ghSettings.token,ghSettings.owner,ghSettings.repo,f.name)));
+          // Merge: GitHub wins on conflict (newer updatedAt)
+          ghTrees.forEach(gt=>{
+            const li=merged.findIndex(t=>t.id===gt.id);
+            if(li===-1){ merged.push(gt); storageSet(gt.id,gt); }
+            else if((gt.updatedAt||0)>(merged[li].updatedAt||0)){ merged[li]=gt; storageSet(gt.id,gt); }
+          });
+          setGhStatus("synced");
+        } catch(e){ console.warn("GitHub sync failed:",e); setGhStatus("error"); }
+      }
+      setTrees(merged.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)));
+    } catch(e){ console.error(e); }
+    setLoading(false);
+  })(); },[]);
+
+  const createTree=name=>{
+    const id="tree:"+Date.now(),now=Date.now();
+    const t={id,name,people:[],rels:[],createdAt:now,updatedAt:now};
+    setTrees(prev=>[t,...prev]);
+    setOpenId(id);
+  };
+
+  const saveTree=async tree=>{
+    await storageSet(tree.id,tree);
+    setTrees(prev=>{ const idx=prev.findIndex(t=>t.id===tree.id); const next=idx===-1?[tree,...prev]:prev.map(t=>t.id===tree.id?tree:t); return next.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); });
+    // GitHub sync
+    if(ghSettings?.token){
+      setGhStatus("syncing");
+      try { await ghSaveTree(ghSettings.token,ghSettings.owner,ghSettings.repo,tree); setGhStatus("synced"); }
+      catch(e){ console.warn("GitHub save failed:",e); setGhStatus("error"); }
+    }
+  };
+
+  const deleteTree=async id=>{
+    await storageDel(id);
+    setTrees(prev=>prev.filter(t=>t.id!==id));
+    if(openId===id) setOpenId(null);
+    if(ghSettings?.token){
+      try { await ghDeleteTree(ghSettings.token,ghSettings.owner,ghSettings.repo,id); }
+      catch(e){ console.warn("GitHub delete failed:",e); }
+    }
+  };
+
+  const importTree=async data=>{
+    const id="tree:"+Date.now(),now=Date.now();
+    const tree={...data,id,updatedAt:now,importedAt:now};
+    await storageSet(id,tree);
+    setTrees(prev=>[tree,...prev]);
+    if(ghSettings?.token){
+      try { await ghSaveTree(ghSettings.token,ghSettings.owner,ghSettings.repo,tree); }
+      catch(e){ console.warn("GitHub import save failed:",e); }
+    }
+  };
+
+  const handleGhSettings=(s)=>{ setGhSettings(s); if(!s) ghSettingsSet(null); };
 
   const STYLE="@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');*{box-sizing:border-box}input::placeholder{color:#94a3b8}select option{background:#ffffff;color:#1e293b}::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:#f0f4ff}::-webkit-scrollbar-thumb{background:#c7d2f0;border-radius:3px}";
   const currentTree=trees.find(t=>t.id===openId);
 
   if(!authed) return <LoginScreen onLogin={()=>setAuthed(true)}/>;
   if(openId&&currentTree) return <div><style>{STYLE}</style><TreeEditor tree={currentTree} onSave={saveTree} onBack={()=>setOpenId(null)}/></div>;
-  return <div><style>{STYLE}</style><Home trees={trees} loading={loading} onOpen={setOpenId} onCreate={createTree} onDelete={deleteTree} onImport={importTree} onExport={exportTree}/></div>;
+  return <div><style>{STYLE}</style><Home trees={trees} loading={loading} onOpen={setOpenId} onCreate={createTree} onDelete={deleteTree} onImport={importTree} onExport={exportTree} ghSettings={ghSettings} ghStatus={ghStatus} onGhSettings={handleGhSettings}/></div>;
 }
