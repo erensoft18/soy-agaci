@@ -2064,9 +2064,9 @@ function TreeEditor({tree,onSave,onBack}) {
 // ─── GitHub API ──────────────────────────────────────────────────────────────
 // ─── GitHub Sabit Ayarlar ─────────────────────────────────────────────────────
 // Aşağıdaki değerleri doldurun:
-const GH_TOKEN = "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";          // GitHub Personal Access Token (repo yetkili)
-const GH_OWNER = "erensoft18";          // GitHub kullanıcı adınız (örn: "erensoft18")
-const GH_REPO  = "soy-agaci-veriler"; // Repo adı (otomatik oluşturulur)
+const GH_TOKEN = "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";
+const GH_OWNER = "erensoft18";
+const GH_REPO  = "soy-agaci-veriler";
 
 function ghSettingsGet() {
   // Kod üzerinde tanımlanmışsa onu kullan, yoksa localStorage'a bak
@@ -2277,7 +2277,7 @@ function GitHubSettingsModal({onClose, onSave, current}) {
   );
 }
 
-function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport,ghSettings,ghStatus,onGhSettings}) {
+function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport,ghSettings,ghStatus,ghError,onGhSettings}) {
   const [confirmId,setConfirmId]=useState(null);
   const [newName,setNewName]=useState("");
   const [view,setView]=useState("list");
@@ -2300,14 +2300,17 @@ function Home({trees,loading,onOpen,onCreate,onDelete,onImport,onExport,ghSettin
         </div>
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
           <div style={{fontSize:12,color:"#64748b",fontWeight:500}}>{trees.length} proje</div>
-          <button onClick={()=>setShowGhSettings(true)}
-            title={ghSettings?"GitHub: "+ghSettings.owner+"/"+ghSettings.repo:"GitHub'a bağlan"}
-            style={{background:ghSettings?"#f0fdf4":"#f8faff",border:"1px solid "+(ghSettings?"#86efac":"#e2e8f0"),borderRadius:8,padding:"5px 9px",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",gap:5,color:ghSettings?"#166534":"#64748b",fontFamily:FONT}}>
-            🐙
-            {ghStatus==="syncing"&&<span style={{fontSize:10}}>⏳</span>}
-            {ghStatus==="synced"&&<span style={{fontSize:10,color:"#10b981"}}>✓</span>}
-            {ghStatus==="error"&&<span style={{fontSize:10,color:"#ef4444"}}>!</span>}
-          </button>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2}}>
+            <button onClick={()=>setShowGhSettings(true)}
+              title={ghSettings?"GitHub: "+ghSettings.owner+"/"+ghSettings.repo:"GitHub'a bağlan"}
+              style={{background:ghSettings&&ghStatus!=="error"?"#f0fdf4":ghStatus==="error"?"#fef2f2":"#f8faff",border:"1px solid "+(ghStatus==="error"?"#fca5a5":ghSettings?"#86efac":"#e2e8f0"),borderRadius:8,padding:"5px 9px",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",gap:5,color:ghStatus==="error"?"#ef4444":ghSettings?"#166534":"#64748b",fontFamily:FONT}}>
+              🐙
+              {ghStatus==="syncing"&&<span style={{fontSize:10}}>⏳</span>}
+              {ghStatus==="synced"&&<span style={{fontSize:10,color:"#10b981"}}>✓</span>}
+              {ghStatus==="error"&&<span style={{fontSize:10,color:"#ef4444"}}>✕</span>}
+            </button>
+            {ghError&&<div style={{fontSize:10,color:"#ef4444",maxWidth:200,textAlign:"right",fontFamily:FONT,lineHeight:1.3,cursor:"pointer"}} onClick={()=>setShowGhSettings(true)}>{ghError}</div>}
+          </div>
         </div>
       </div>
       {/* Action bar */}
@@ -2511,17 +2514,26 @@ export default function App() {
   })(); },[]);
 
   // ── Central GitHub push helper ──────────────────────────────────────────────
+  const [ghError, setGhError] = useState("");
+
   const ghPush = async (tree) => {
     const gs = ghSettingsGet();
     if (!gs?.token) return;
     setGhStatus("syncing");
+    setGhError("");
     try {
       await ghSaveTree(gs.token, gs.owner, gs.repo, tree);
       setGhStatus("synced");
     } catch(e) {
       console.error("GitHub push failed:", e.message);
       setGhStatus("error");
-      // Queue for retry on next save
+      if (e.message.includes("Bad credentials") || e.message.includes("401")) {
+        setGhError("GitHub token geçersiz. 🐙 butonuna tıklayarak token'ı güncelleyin.");
+      } else if (e.message.includes("Not Found") || e.message.includes("404")) {
+        setGhError("GitHub repo bulunamadı. 🐙 butonundan tekrar bağlanın.");
+      } else {
+        setGhError("GitHub hatası: " + e.message);
+      }
     }
   };
 
@@ -2531,13 +2543,15 @@ export default function App() {
     await storageSet(id, t);
     setTrees(prev=>[t,...prev]);
     setOpenId(id);
-    await ghPush(t);
+    ghPush(t).catch(()=>{}); // non-blocking
   };
 
   const saveTree = async tree => {
+    // Local save is instant — always succeeds
     await storageSet(tree.id, tree);
     setTrees(prev=>{ const idx=prev.findIndex(t=>t.id===tree.id); const next=idx===-1?[tree,...prev]:prev.map(t=>t.id===tree.id?tree:t); return next.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); });
-    await ghPush(tree);
+    // GitHub push is non-blocking — UI responds immediately, push happens in background
+    ghPush(tree).catch(()=>{}); // errors handled inside ghPush
   };
 
   const deleteTree = async id => {
@@ -2552,14 +2566,16 @@ export default function App() {
   };
 
   const importTree = async data => {
-    const id="tree:"+Date.now(), now=Date.now();
-    const tree={...data,id,updatedAt:now,importedAt:now};
+    // Keep original id if it exists so the same file syncs across devices
+    const id = data.id || ("tree:"+Date.now());
+    const now = Date.now();
+    const tree = {...data, id, updatedAt:now, importedAt:now};
     await storageSet(id, tree);
-    setTrees(prev=>[tree,...prev]);
-    if(true){
-      try { await ghPush(tree); }
-      catch(e){ console.warn("GitHub import save failed:",e); }
-    }
+    setTrees(prev => {
+      const exists = prev.findIndex(t=>t.id===id);
+      return exists===-1 ? [tree,...prev] : prev.map(t=>t.id===id?tree:t);
+    });
+    ghPush(tree).catch(()=>{}); // non-blocking
   };
 
   const handleGhSettings=(s)=>{ ghSettingsSet(s); if(!s){ localStorage.removeItem("soyagaci_gh_settings"); } window.location.reload(); };
@@ -2569,5 +2585,5 @@ export default function App() {
 
   if(!authed) return <LoginScreen onLogin={()=>setAuthed(true)}/>;
   if(openId&&currentTree) return <div><style>{STYLE}</style><TreeEditor tree={currentTree} onSave={saveTree} onBack={()=>setOpenId(null)}/></div>;
-  return <div><style>{STYLE}</style><Home trees={trees} loading={loading} onOpen={setOpenId} onCreate={createTree} onDelete={deleteTree} onImport={importTree} onExport={exportTree} ghSettings={ghSettings} ghStatus={ghStatus} onGhSettings={handleGhSettings}/></div>;
+  return <div><style>{STYLE}</style><Home trees={trees} loading={loading} onOpen={setOpenId} onCreate={createTree} onDelete={deleteTree} onImport={importTree} onExport={exportTree} ghSettings={ghSettings} ghStatus={ghStatus} ghError={ghError} onGhSettings={handleGhSettings}/></div>;
 }
