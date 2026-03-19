@@ -2064,7 +2064,7 @@ function TreeEditor({tree,onSave,onBack}) {
 // ─── GitHub API ──────────────────────────────────────────────────────────────
 // ─── GitHub Sabit Ayarlar ─────────────────────────────────────────────────────
 // Aşağıdaki değerleri doldurun:
-const GH_TOKEN = "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";          // GitHub Personal Access Token (repo yetkili)
+const GH_TOKEN = "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";          // GitHub Personal Access Token (repo yetkili)
 const GH_OWNER = "erensoft18";          // GitHub kullanıcı adınız (örn: "erensoft18")
 const GH_REPO  = "soy-agaci-veriler"; // Repo adı (otomatik oluşturulur)
 
@@ -2468,7 +2468,13 @@ export default function App() {
   const [trees,   setTrees]   = useState([]);
   const [openId,  setOpenId]  = useState(null);
   const [loading, setLoading] = useState(true);
-  const [ghSettings, setGhSettings] = useState(()=>ghSettingsGet());
+  const [ghManual, setGhManual] = useState(()=>{
+    // Only use localStorage if constants are empty
+    if (GH_TOKEN && GH_OWNER) return null; // will use constants via ghSettingsGet()
+    return null; // localStorage handled in ghSettingsGet()
+  });
+  // Always derive fresh — so hardcoded constants always take effect
+  const ghSettings = ghSettingsGet();
   const [ghStatus,   setGhStatus]   = useState(""); // "", "syncing", "synced", "error"
 
   // Load trees: first from localStorage, then sync from GitHub if connected
@@ -2479,19 +2485,20 @@ export default function App() {
       const local=await Promise.all(keys.map(k=>storageGet(k)));
       let merged=local.filter(Boolean);
 
-      if(ghSettings?.token) {
+      const gs = ghSettingsGet(); // always fresh
+      if(gs?.token) {
         setGhStatus("syncing");
         try {
-          const files=await ghListTrees(ghSettings.token,ghSettings.owner,ghSettings.repo);
-          const ghTrees=await Promise.all(files.map(f=>ghGetTree(ghSettings.token,ghSettings.owner,ghSettings.repo,f.name)));
-          // Merge: GitHub wins on conflict (newer updatedAt)
+          const files=await ghListTrees(gs.token, gs.owner, gs.repo);
+          const ghTrees=await Promise.all(files.map(f=>ghGetTree(gs.token, gs.owner, gs.repo, f.name)));
+          // Merge: GitHub wins (it is the source of truth)
           ghTrees.forEach(gt=>{
             const li=merged.findIndex(t=>t.id===gt.id);
             if(li===-1){ merged.push(gt); storageSet(gt.id,gt); }
-            else if((gt.updatedAt||0)>(merged[li].updatedAt||0)){ merged[li]=gt; storageSet(gt.id,gt); }
+            else { merged[li]=gt; storageSet(gt.id,gt); } // GitHub always wins
           });
           setGhStatus("synced");
-        } catch(e){ console.warn("GitHub sync failed:",e); setGhStatus("error"); }
+        } catch(e){ console.error("GitHub sync failed:",e.message); setGhStatus("error"); }
       }
       setTrees(merged.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)));
     } catch(e){ console.error(e); }
@@ -2508,11 +2515,12 @@ export default function App() {
   const saveTree=async tree=>{
     await storageSet(tree.id,tree);
     setTrees(prev=>{ const idx=prev.findIndex(t=>t.id===tree.id); const next=idx===-1?[tree,...prev]:prev.map(t=>t.id===tree.id?tree:t); return next.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)); });
-    // GitHub sync
-    if(ghSettings?.token){
+    // GitHub sync — always read fresh settings
+    const gs2=ghSettingsGet();
+    if(gs2?.token){
       setGhStatus("syncing");
-      try { await ghSaveTree(ghSettings.token,ghSettings.owner,ghSettings.repo,tree); setGhStatus("synced"); }
-      catch(e){ console.warn("GitHub save failed:",e); setGhStatus("error"); }
+      try { await ghSaveTree(gs2.token,gs2.owner,gs2.repo,tree); setGhStatus("synced"); }
+      catch(e){ console.error("GitHub save failed:",e.message); setGhStatus("error"); }
     }
   };
 
@@ -2520,9 +2528,10 @@ export default function App() {
     await storageDel(id);
     setTrees(prev=>prev.filter(t=>t.id!==id));
     if(openId===id) setOpenId(null);
-    if(ghSettings?.token){
-      try { await ghDeleteTree(ghSettings.token,ghSettings.owner,ghSettings.repo,id); }
-      catch(e){ console.warn("GitHub delete failed:",e); }
+    const gs3=ghSettingsGet();
+    if(gs3?.token){
+      try { await ghDeleteTree(gs3.token,gs3.owner,gs3.repo,id); }
+      catch(e){ console.warn("GitHub delete failed:",e.message); }
     }
   };
 
@@ -2537,7 +2546,7 @@ export default function App() {
     }
   };
 
-  const handleGhSettings=(s)=>{ setGhSettings(s); if(!s) ghSettingsSet(null); };
+  const handleGhSettings=(s)=>{ ghSettingsSet(s); if(!s){ localStorage.removeItem("soyagaci_gh_settings"); } window.location.reload(); };
 
   const STYLE="@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');*{box-sizing:border-box}input::placeholder{color:#94a3b8}select option{background:#ffffff;color:#1e293b}::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:#f0f4ff}::-webkit-scrollbar-thumb{background:#c7d2f0;border-radius:3px}";
   const currentTree=trees.find(t=>t.id===openId);
